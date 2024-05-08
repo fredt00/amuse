@@ -315,40 +315,34 @@ class CalculateFieldForParticles:
         return result_ax, result_ay, result_az
 
 
-class GravityCodeInField:
-    def __init__(
-        self,
-        code,
-        field_codes,
-        do_sync=True,
-        verbose=False,
-        radius_is_eps=False,
-        h_smooth_is_eps=False,
-        zero_smoothing=False,
-    ):
+class GravityCodeInField(object):
+
+
+    def __init__(self, code, field_codes, do_sync=True, verbose=False, radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False, softening_length_squared=-(1.0 | units.pc)**2.):
         """
         verbose indicates whether to output some run info
         """
         self.code = code
         self.field_codes = field_codes
 
-        if hasattr(self.code, "model_time"):
+        if hasattr(self.code, 'model_time'):
             self.time = self.code.model_time
         else:
             self.time = quantities.zero
 
-        self.do_sync = do_sync
-        self.verbose = verbose
-        self.timestep = None
+        self.do_sync=do_sync
+        self.verbose=verbose
+        self.timestep=None
         self.radius_is_eps = radius_is_eps
         self.h_smooth_is_eps = h_smooth_is_eps
+        self.softening_length_squared = softening_length_squared
 
-        required_attributes = ["mass", "x", "y", "z", "vx", "vy", "vz"]
+        required_attributes = ['mass', 'x', 'y', 'z', 'vx', 'vy', 'vz']
         if self.radius_is_eps:
-            required_attributes.append("radius")
+            required_attributes.append('radius')
         elif self.h_smooth_is_eps:
-            required_attributes.append("h_smooth")
-        self.required_attributes = lambda p, x: x in required_attributes
+            required_attributes.append('h_smooth')
+        self.required_attributes = lambda p, x : x in required_attributes
 
         try:
             hasattr(self.code.parameters, "epsilon_squared")
@@ -358,7 +352,8 @@ class GravityCodeInField:
         except CoreException:  # hasattr will fail with an exception
             self.zero_smoothing = True
 
-    def evolve_model(self, tend, timestep=None):
+
+    def evolve_model(self,tend,timestep=None):
         """
         evolve combined system to tend, timestep fixes timestep
         """
@@ -366,51 +361,53 @@ class GravityCodeInField:
         if timestep is None:
             timestep = self.timestep
 
-        first = True
-        while self.time < (tend - timestep / 2.0):
+        first=True
+        while self.time < (tend-timestep/2.):
             if first:
-                self.kick(timestep / 2.0)
-                first = False
+                self.kick(timestep/2.)
+                first=False
             else:
                 self.kick(timestep)
 
-            self.drift(self.time + timestep)
+            self.drift(self.time+timestep)
 
-            self.time += timestep
+            self.time+=timestep
 
         if not first:
-            self.kick(timestep / 2.0)
+             self.kick(timestep/2.)
+
+
 
     def synchronize_model(self):
         """
         explicitly synchronize all components
         """
-        if hasattr(self.code, "synchronize_model"):
-            if self.verbose:
-                print(self.code.__class__.__name__, "is synchronizing", end=" ")
+        if hasattr(self.code,"synchronize_model"):
+            if(self.verbose):
+                print(self.code.__class__.__name__,"is synchronizing", end=' ')
 
             self.code.synchronize_model()
 
-            if self.verbose:
+            if(self.verbose):
                 print(".. done")
 
-    def get_potential_at_point(self, radius, x, y, z):
-        return self.code.get_potential_at_point(radius, x, y, z)
+    def get_potential_at_point(self,radius,x,y,z):
+        return self.code.get_potential_at_point(radius,x,y,z)
 
-    def get_gravity_at_point(self, radius, x, y, z):
-        return self.code.get_gravity_at_point(radius, x, y, z)
+    def get_gravity_at_point(self,radius,x,y,z):
+        return self.code.get_gravity_at_point(radius,x,y,z)
 
     @property
     def model_time(self):
-        return self.time
+         return self.time
 
     @property
     def potential_energy(self):
-        if not hasattr(self.code, "particles"):
+        if not hasattr(self.code, 'particles'):
             return quantities.zero
 
         result = self.code.potential_energy
-        particles = self.code.particles.copy(filter_attributes=self.required_attributes)
+        particles = self.code.particles.copy(filter_attributes = self.required_attributes)
 
         for y in self.field_codes:
             energy = self.get_potential_energy_in_field_code(particles, y)
@@ -423,7 +420,7 @@ class GravityCodeInField:
 
     @property
     def thermal_energy(self):
-        if hasattr(self.code, "thermal_energy"):
+        if hasattr(self.code,'thermal_energy'):
             return self.code.thermal_energy
         else:
             return quantities.zero
@@ -447,80 +444,84 @@ class GravityCodeInField:
             raise AttributeError
 
     def drift(self, tend):
-        if not hasattr(self.code, "evolve_model"):
+        if not hasattr(self.code,"evolve_model"):
             return
-        if self.verbose:
+        if (self.verbose):
             print(self.code.__class__.__name__, "is evolving to", tend)
 
         self.code.evolve_model(tend)
 
-        if self.verbose:
+
+        if(self.verbose):
             print(".. done")
 
     def cannot_kick(self):
         """
-        check if the code is capable of kicking other particles,
-        please do not try to optimize this, I know it is called every kick but
-        only calculating it at the start causes an annoying bug in certain uses
-        of the code.
+            check if the code is capable of kicking other particles,
+            please do not try to optimize this, I know it is called every kick but
+            only calculating it at the start causes an annoying bug in certain uses of the code.
         """
-        return len(self.code.particles) == 0 or not (
-            hasattr(self, "particles")
-            and "vx" in self.particles.get_attribute_names_defined_in_store()
-        )
+        return len(self.code.particles)==0 or not (hasattr(self, 'particles') and 'vx' in self.particles.get_attribute_names_defined_in_store())
 
     def kick(self, dt):
+
         if self.cannot_kick():
             return quantities.zero
 
-        particles = self.code.particles.copy(filter_attributes=self.required_attributes)
+        particles = self.code.particles.copy(filter_attributes = self.required_attributes)
         kinetic_energy_before = particles.kinetic_energy()
 
         for field_code in self.field_codes:
-            if self.verbose:
-                print(
-                    self.code.__class__.__name__,
-                    "receives kick from",
-                    field_code.__class__.__name__,
-                    end=" ",
-                )
+            if(self.verbose):
+                print(self.code.__class__.__name__,"receives kick from",field_code.__class__.__name__, end=' ')
 
-            self.kick_with_field_code(particles, field_code, dt)
+            self.kick_with_field_code(
+                particles,
+                field_code,
+                dt
+            )
 
-            if self.verbose:
+            if(self.verbose):
                 print(".. done")
 
-        channel = particles.new_channel_to(self.code.particles)
-        channel.copy_attributes(["vx", "vy", "vz"])
+        channel=particles.new_channel_to(self.code.particles)
+        channel.copy_attributes(["vx","vy","vz"])
 
         kinetic_energy_after = particles.kinetic_energy()
         return kinetic_energy_after - kinetic_energy_before
 
+
     def _softening_lengths(self, particles):
-        if self.radius_is_eps:
+        if self.softening_length_squared>=0|units.m**2:
+            return (self.softening_length_squared**0.5).as_vector_with_length(len(particles))
+        elif self.radius_is_eps:
             return particles.radius
         elif self.h_smooth_is_eps:
             return particles.h_smooth
         elif self.zero_smoothing:
-            return 0.0 * particles.x
+            return 0.*particles.x
         else:
-            return (self.code.parameters.epsilon_squared**0.5).as_vector_with_length(
-                len(particles)
-            )
+            return (self.code.parameters.epsilon_squared**0.5).as_vector_with_length(len(particles))
 
     def get_potential_energy_in_field_code(self, particles, field_code):
-        pot = field_code.get_potential_at_point(
-            self._softening_lengths(particles), particles.x, particles.y, particles.z
+        pot=field_code.get_potential_at_point(
+            self._softening_lengths(particles),
+            particles.x,
+            particles.y,
+            particles.z
         )
-        return (pot * particles.mass).sum() / 2
+        return (pot*particles.mass).sum() / 2
 
     def kick_with_field_code(self, particles, field_code, dt):
-        ax, ay, az = field_code.get_gravity_at_point(
-            self._softening_lengths(particles), particles.x, particles.y, particles.z
+        ax,ay,az=field_code.get_gravity_at_point(
+            self._softening_lengths(particles),
+            particles.x,
+            particles.y,
+            particles.z
         )
         self.update_velocities(particles, dt, ax, ay, az)
 
-    def update_velocities(self, particles, dt, ax, ay, az):
+    def update_velocities(self,particles, dt,  ax, ay, az):
         particles.vx += dt * ax
         particles.vy += dt * ay
         particles.vz += dt * az
