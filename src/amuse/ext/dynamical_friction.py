@@ -22,7 +22,7 @@ class dynamical_friction():
         self.code=code # we need to be able to access latest version of the particles... ideally without storing twice
         self.G = G
         self.r_half = r_half
-        
+
     def set_rv_mass(self):
         """update the satellite properties in the dynamical friction model
         """
@@ -58,6 +58,10 @@ class dynamical_friction():
 
     def thermal_integral(self, x):
         return math.erf(x) - 2*x/np.pi**.5 * np.exp(-x**2)
+    
+    @property
+    def particles(self):
+        return self.code.particles
     
 
 class NFW_profile(LiteratureReferencesMixIn):

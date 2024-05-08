@@ -443,3 +443,7 @@ packages/dist
 
 # standard directory for a virtualenv
 env/
+
+# my tests
+examples/my_tests/
+src/amuse/version.py
