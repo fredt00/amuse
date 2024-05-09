@@ -30,6 +30,7 @@ class dynamical_friction():
         self.velocity= self.code.particles.center_of_mass_velocity()
         self.r = np.sqrt(self.x ** 2.0 + self.y ** 2.0 + self.z ** 2.0)
 
+        # find the current half mass radius - slow!
         if len(self.code.particles)!=1:
             self.r_half = self.code.particles.LagrangianRadii(mf=[0.5])[0][0]
         self.mass = self.code.particles.mass.sum()
