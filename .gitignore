@@ -445,6 +445,6 @@ packages/dist
 env/
 
 # my tests
-examples/my_tests/
-src/amuse/version.py
+# examples/my_tests/
+# src/amuse/version.py
 .DS_Store
