@@ -4,6 +4,7 @@ import amuse.couple.bridge as bridge
 from amuse.datamodel import Particles
 import matplotlib.pyplot as plt
 from amuse.plot import plot
+from amuse.community.petar.interface import petar
 
 halo_model = NFW_profile(4586423.83576 | units.MSun/units.kpc**3, 4.40907140716 | units.kpc)
 R0 = 4.43 | units.kpc
@@ -16,9 +17,12 @@ vy = halo_model.circular_velocity(R0)
 # test_mass.velocity = [0, vy.value_in(units.kms), 0] | units.kms 
 
 conv = converter = nbody_system.nbody_to_si(1e6 | units.MSun, 17 | units.pc)
-test_mass=new_plummer_model(number_of_particles=100000,convert_nbody=conv)
+test_mass=new_plummer_model(number_of_particles=10000,convert_nbody=conv)
+test_mass.position +=[R0.value_in(units.kpc),0,0] | units.kpc
+test_mass.velocity +=[0,vy.value_in(units.kms),0] | units.kms
+test_mass.mass = 100 | units.MSun
 converter = nbody_system.nbody_to_si(test_mass.total_mass(), dt)
-
+print(test_mass.LagrangianRadii(mf=[0.5])[0][0].in_(units.pc))
 
 # gravity = BHTree(converter)
 # gravity.parameters.timestep = .5 | nbody_system.time
