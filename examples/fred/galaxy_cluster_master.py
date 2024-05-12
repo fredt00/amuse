@@ -97,7 +97,6 @@ def setup_analytic_halo(galaxy):
     menc = []
     radii = galaxy.position.lengths()
     for radius in bin_centers:
-        # selection = galaxy.select(lambda r: r.length()<(radius | units.kpc), ['position'])
         selection = galaxy[radii<radius | units.kpc]
         if selection.mass.sum()>0 | units.MSun:
             menc.append(selection.mass.sum().value_in(units.MSun))
@@ -149,7 +148,7 @@ def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|u
         del(snapshot)
     else:
          # define the file name and save ICs. The file name should be some combination of parameters
-        restart_file= 'simNh{:1g}eps{:g}n{:1g}m{:g}W{:g}X{:g}.hdf5'.format(Nh, eps_gal_to_clu.value_in(units.pc), n,mstar.value_in(units.MSun),W0,
+        restart_file= 'sim_analytic_{:s}_df_model_{:s}_n{:1g}m{:g}W{:g}X{:g}.hdf5'.format(str(analytic),str(df_model), n,mstar.value_in(units.MSun),W0,
                                                                 Xinit.value_in(units.kpc))
         print('setting up ICs to be saved to ' + restart_file)
         if os.path.exists('cluster_'+restart_file):
@@ -288,7 +287,7 @@ def new_option_parser():
     result.add_option("-f", dest="restart_file", default = None,
                       help="restart file name [%default]")
     result.add_option("-t", unit=units.Myr,
-                      dest="t_end", type="float", default = 4.6|units.Gyr,
+                      dest="t_end", type="float", default = 5|units.Gyr,
                       help="end time of the simulation [%default]")
     result.add_option("--do_scale", 
                       type='choice', choices=('True', 'False'), dest='do_scale', default='True',
