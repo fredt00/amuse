@@ -113,10 +113,11 @@ def setup_analytic_halo(galaxy):
     return halo_model
 
 
+# The main function that sets up the simulation and evolves it
 def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
           Rh=4.1 | units.kpc,Rvir=1|units.parsec,diagnostic=20, t_settle=1|units.Gyr,
             Xinit=4.43 | units.kpc, eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None, beta=3,
-            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False):
+            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=4.35|units.parsec):
     options = locals()
     print('your specified options are', options)
     if do_scale== 'False': do_scale=False
@@ -260,23 +261,22 @@ def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|u
 
     # evolve the bridge to the requested time
     time = 0 | units.myr
-    count=0
     while time < t_end:
         time +=dt
-        count+=1
         integrator.evolve_model(time)
         print('evolved to', time.in_(units.Myr)) 
         channel_to_cluster.copy_attributes(["mass", 'x','y','z', 'vx', 'vy', 'vz'])
         if not analytic:
             channel_to_galaxy.copy_attributes(["mass", 'x','y','z', 'vx', 'vy', 'vz'])
             print('cluster distance from galactic centre', (cluster.center_of_mass()-galaxy.center_of_mass()).length().in_(units.kpc))
+        else:
+            print('cluster distance from galactic centre', cluster.center_of_mass().length().in_(units.kpc))
         # save output
         if time.value_in(units.Myr) % diagnostic.value_in(units.Myr)==0:
             io.write_set_to_file(cluster,'cluster_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
         sys.stdout.flush()
     gravity_gal.stop()
     gravity_clu.stop()
-
 
 # The parser for taking the users inputs following the python script at input
 def new_option_parser():

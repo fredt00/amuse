@@ -28,6 +28,7 @@ class MakeKingModel:
         beta=0.0,
         verbose=False,
         center_model=True,
+        return_radial_ratio=False,
         **kwargs
     ):
         self.kwargs = kwargs
@@ -40,6 +41,7 @@ class MakeKingModel:
         self.W0 = W0
         self.beta_w0 = beta * W0
         self.scale_fac = math.exp(self.beta_w0)
+        self.return_radial_ratio = return_radial_ratio
 
         self.YMAX = 4.0  # Note: make sure YMAX is a float.
         self.NG = 1000
@@ -518,11 +520,11 @@ class MakeKingModel:
         #    // System is in virial equilibrium in a consistent set of units
         #    // with G, core radius, and total mass = 1.
 
-        return (masses, positions, velocities)
+        return (masses, positions, velocities,rr[nprof] / (0.25 / kin), rhalf/rr[nprof])
 
     @property
     def result(self):
-        masses, positions, velocities = self.makeking()
+        masses, positions, velocities, rt_rvir, rh_rt = self.makeking()
         result = datamodel.Particles(self.number_of_particles, **self.kwargs)
         result.mass = nbody_system.mass.new_quantity(masses)
         result.position = nbody_system.length.new_quantity(positions)
@@ -538,8 +540,10 @@ class MakeKingModel:
                 result, self.convert_nbody.as_converter_from_si_to_generic()
             )
             result = result.copy()
-
-        return result
+        if self.return_radial_ratio:
+            return result, rt_rvir, rh_rt
+        else:
+            return result
 
 
 def new_king_model(number_of_particles, W0, *list_arguments, **keyword_arguments):
@@ -558,6 +562,7 @@ def new_king_model(number_of_particles, W0, *list_arguments, **keyword_arguments
         rescaled King models; models with b < 0 approach isothermal spheres as
         b --> -infinity.
     :argument verbose: Be verbose (output is suppressed by default) [False]
+    :argument return_rt_rvir: return the ratio of tidal and virial radii [False]
     """
     uc = MakeKingModel(number_of_particles, W0, *list_arguments, **keyword_arguments)
     return uc.result
