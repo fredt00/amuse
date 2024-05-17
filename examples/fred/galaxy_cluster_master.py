@@ -6,12 +6,12 @@ from amuse.community.petar.interface import petar
 from amuse.community.fastkick.interface import FastKick
 from amuse.couple import bridge
 from amuse import io
-from amuse.datamodel import Particles, ParticlesSuperset
+from amuse.datamodel import Particles
 import sys
 import os
 from scipy.optimize import minimize
-import math
 from amuse.ext.dynamical_friction import dynamical_friction, NFW_profile
+from amuse.ext.derived_grav_systems import star_cluster
 
 def bin_particles_density(radii, masses, num_bins):
     bin_edges = np.logspace(np.log10(min(radii)), np.log10(max(radii)), num_bins + 1)
@@ -32,19 +32,6 @@ def fit_function_menc(parameters, radius, density):
     predicted_density = mass_enclosed(radius, scale_radius, rho_0)
     return np.sum((predicted_density - density)**2)
 
-## up here we should define as many functions as possible for setting up ICs, reading from files, and evolving for use in main
-def setup_cluster(n,mstar,Rcluster,W0,Rinit,Vinit):
-    Mcluster = n * mstar
-    converter= nbody_system.nbody_to_si(Mcluster,Rcluster)
-    np.random.seed(123)
-    stars = new_king_model(int(n), W0,convert_nbody=converter)
-    stars.mass=mstar
-    stars.move_to_center()
-    stars.position+= Rinit
-    stars.velocity+= Vinit
-    stars.radius = 1 | units.RSun
-    return stars,converter
-
 def setup_test_particle(Rinit,Vinit, mass):
     converter= nbody_system.nbody_to_si(mass,Rinit[0])
     np.random.seed(123)
@@ -52,8 +39,7 @@ def setup_test_particle(Rinit,Vinit, mass):
     particle.mass=mass
     particle.position= Rinit
     particle.velocity= Vinit
-    # particle.radius = 4.35 | units.pc
-    return particle,converter
+    return particle
 
 def setup_galaxy(Nh=1e5, Mh=1e10 | units.MSun,Rscale=4.1 | units.kpc, t_settle=0|units.Myr, gadget_options={}, beta=3, dt=1 | units.Myr, do_scale=False):
     converter= nbody_system.nbody_to_si(Mh, Rscale)
@@ -112,12 +98,11 @@ def setup_analytic_halo(galaxy):
     halo_model = NFW_profile(rho_0_fit_menc, scale_radius_fit_menc)
     return halo_model
 
-
 # The main function that sets up the simulation and evolves it
-def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
-          Rh=4.1 | units.kpc,Rvir=1|units.parsec,diagnostic=20, t_settle=1|units.Gyr,
+def main(Nh=10000, n=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
+          Rh=4.43 | units.kpc,diagnostic=20 | units.Myr, t_settle=1|units.Gyr,
             Xinit=4.43 | units.kpc, eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None, beta=3,
-            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=4.35|units.parsec):
+            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=4.35|units.parsec, M_cluster=None):
     options = locals()
     print('your specified options are', options)
     if do_scale== 'False': do_scale=False
@@ -142,7 +127,6 @@ def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|u
             if snapshot.get_timestamp().in_(units.Myr)==restart_time: break
         cluster = snapshot
         converter_gal = nbody_system.nbody_to_si(galaxy.mass.sum(),dt)
-        converter_clu = nbody_system.nbody_to_si(cluster.mass.sum(),dt)
         print('restarting from', restart_time, ' using file', restart_file)
         del(all_snap_galaxy)
         del(all_snap_cluster)
@@ -189,11 +173,21 @@ def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|u
         print('initialising cluster on orbit with R=', Rinit, 'V=', Vinit)
         t_orb=(2 * np.pi*Xinit/Vy)
         print('bridge timestep/torb is', dt/t_orb)
+
+        # set up code for evolution of cluster
+        converter_petar = nbody_system.nbody_to_si(dt, cluster.total_mass())
+        # test mass or cluster
         if n==1:
-            cluster, converter_clu = setup_test_particle(Rinit, Vinit, mstar)
+            gravity_clu = BHTree(converter_petar, number_of_workers = 1)
+            gravity_clu.parameters.timestep = 1/2. | nbody_system.time
+            cluster = setup_test_particle(Rinit, Vinit, mstar)
+            gravity_clu.particles.add_particles(cluster)
         else:
-            cluster, converter_clu = setup_cluster(n,mstar,Rvir, W0,Rinit,Vinit)
-        io.write_set_to_file(cluster,'cluster_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
+            cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=n_cluster, M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=1)
+            cluster.particles.position += Rinit
+            cluster.particles.velocity += Vinit
+            io.write_set_to_file(cluster.unbound,'stream_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
+        io.write_set_to_file(cluster.bound,'cluster_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
         if not analytic:
             io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
 
@@ -204,17 +198,6 @@ def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|u
         gravity_gal.parameters.use_hydro_flag=False
         gravity_gal.particles.add_particles(galaxy)
         channel_to_galaxy = gravity_gal.particles.new_channel_to(galaxy)
-
-    # set up code for evolution of cluster
-    converter_petar = nbody_system.nbody_to_si(dt, cluster.total_mass())
-    # test mass or cluster
-    if n==1:
-        gravity_clu = BHTree(converter_petar, number_of_workers = 1)
-        gravity_clu.parameters.timestep = 1/2. | nbody_system.time
-    else:
-        gravity_clu = petar(converter_petar, mode='openmp', number_of_workers = 2)
-    gravity_clu.particles.add_particles(cluster)
-    channel_to_cluster = gravity_clu.particles.new_channel_to(cluster)
 
     if df_model or analytic:
         df_model = dynamical_friction(halo_model, gravity_clu, r_half = (.5**(-2/3)-1)**-.5 * (10 | units.pc) )
@@ -229,14 +212,6 @@ def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|u
             new_galaxy_code_to_calculate_gravity,              # the code that calculates the acceleration field
             input_codes=[gravity_gal],                       # the codes to calculate the acceleration field of
             )
-        
-        def new_code_to_calculate_gravity(): 
-            result = FastKick(converter_petar, number_of_workers=13)  # this can be GPU based at some point
-            return result
-        gravity_from_cluster = bridge.CalculateFieldForCodes(
-            new_code_to_calculate_gravity,               
-            input_codes=[gravity_clu],                       
-            )
     
     # set up the bridge
     print('bridge time step is', dt.in_(units.myr))
@@ -244,18 +219,18 @@ def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|u
     integrator=bridge.Bridge(verbose=True,timestep=dt,use_threading=True)
     
     if analytic:
-        integrator.add_system(gravity_clu,(df_model,halo_model,), do_sync=True)
+        integrator.add_system(cluster,(df_model,halo_model,), do_sync=True)
     elif df_model:
-        system=bridge.GravityCodeInField(gravity_clu, (gravity_from_galaxy,df_model,), do_sync=True, verbose=True,
+        system=bridge.GravityCodeInField(cluster, (gravity_from_galaxy,df_model,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
         integrator.add_code(system)
         integrator.add_code(gravity_gal)
     else:
-        system=bridge.GravityCodeInField(gravity_clu, (gravity_from_galaxy,), do_sync=True, verbose=True,
+        system=bridge.GravityCodeInField(cluster, (gravity_from_galaxy,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
         integrator.add_code(system)
 
-        system_cluster=bridge.GravityCodeInField(gravity_gal, (gravity_from_cluster,), do_sync=True, verbose=True,
+        system_cluster=bridge.GravityCodeInField(gravity_gal, cluster, do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=(0.01 | units.pc)**2)
         integrator.add_code(system_cluster)
 
@@ -265,15 +240,15 @@ def main(Nh=10000, n=100, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|u
         time +=dt
         integrator.evolve_model(time)
         print('evolved to', time.in_(units.Myr)) 
-        channel_to_cluster.copy_attributes(["mass", 'x','y','z', 'vx', 'vy', 'vz'])
         if not analytic:
             channel_to_galaxy.copy_attributes(["mass", 'x','y','z', 'vx', 'vy', 'vz'])
-            print('cluster distance from galactic centre', (cluster.center_of_mass()-galaxy.center_of_mass()).length().in_(units.kpc))
+            print('cluster distance from galactic centre', (cluster.bound.center_of_mass()-galaxy.center_of_mass()).length().in_(units.kpc))
         else:
-            print('cluster distance from galactic centre', cluster.center_of_mass().length().in_(units.kpc))
+            print('cluster distance from galactic centre', cluster.bound.center_of_mass().length().in_(units.kpc))
         # save output
         if time.value_in(units.Myr) % diagnostic.value_in(units.Myr)==0:
-            io.write_set_to_file(cluster,'cluster_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
+            io.write_set_to_file(cluster.bound,'cluster_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
+            io.write_set_to_file(cluster.unbound,'stream_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
         sys.stdout.flush()
     gravity_gal.stop()
     gravity_clu.stop()
@@ -318,14 +293,14 @@ def new_option_parser():
     ######## CLUSTER OPTIONS
     result.add_option("-W", dest="W0", type="float", default = 5.0, # 5 is typical of open clusters and rapidly dissolving GCs, 7 for older, core collapsed objects
                       help="Dimension-less depth of the King potential (W0) [%default]")
-    result.add_option("-n", dest="n", type="int",default = 1e4,
+    result.add_option("-n", dest="n", type="int",default = None,
                       help="number of stars in the cluster [%default]") # note that currently we have equal mass stars so no option needed for that yet
-    result.add_option("-r", "--Rcluster", unit=units.parsec,
-                      dest="Rvir", type="float",default = 3.0|units.parsec,
-                      help="cluser virial radius [%default]")
     result.add_option("--r_half", unit=units.parsec,
                       dest="r_half", type="float",default = 4.35|units.parsec,
-                      help="cluser virial radius [%default]")
+                      help="cluser half mass radius [%default]")
+    result.add_option("--M_cluster", unit=units.MSun,
+                      dest="M_cluster", type="float",default = None,
+                      help="mass of the cluster [%default]")
     result.add_option("-m", unit=units.MSun,
                       dest="mstar", type="float",default = 1 |units.MSun,
                       help="mass of a star in the cluster [%default]")

@@ -86,9 +86,9 @@ class star_cluster(object):
     get_gravity_at_point, get_potential_at_point reimplemented in 
     base_class
     """
-    def __init__(self,code,code_converter, W0, r_tidal=None,r_half=None, n_particles=None, M_cluster=False, field_code=None,field_code_number_of_workers=1):
+    def __init__(self,code,code_converter, W0, r_tidal=None,r_half=None, n_particles=None, M_cluster=False, field_code=None,field_code_number_of_workers=1,code_number_of_workers=1):
         self.converter=code_converter
-        self.code=code(self.converter, mode='openmp',number_of_workers=1)
+        self.code=code(self.converter, mode='openmp',number_of_workers=code_number_of_workers)
         self.field_code=field_code
         self.field_code_number_of_workers=field_code_number_of_workers
 
@@ -151,8 +151,8 @@ class star_cluster(object):
     
     # the unbound particles
     # @property
-    def unbound(self):
-        return self.unbound
+    # def unbound(self):
+    #     return self.unbound
     # @unbound.setter
     # def unbound(self, particle_set):
     #     self.unbound = particle_set
