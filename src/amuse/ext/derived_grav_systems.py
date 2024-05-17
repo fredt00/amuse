@@ -88,7 +88,7 @@ class star_cluster(object):
     """
     def __init__(self,code,code_converter, W0, r_tidal=None,r_half=None, n_particles=None, M_cluster=False, field_code=None,field_code_number_of_workers=1):
         self.converter=code_converter
-        self.code=code(self.converter)
+        self.code=code(self.converter, mode='openmp',number_of_workers=1)
         self.field_code=field_code
         self.field_code_number_of_workers=field_code_number_of_workers
 
@@ -96,7 +96,7 @@ class star_cluster(object):
         self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
 
         self.center_of_mass=center_of_mass(self.code.particles)
-        self.unbound= Particles()
+        self.unbound = Particles()
 
         # initialize the code for get_gravity_at_point and get_potential_at_point
         self.gravity_from_cluster = bridge.CalculateFieldForCodes(
@@ -129,12 +129,13 @@ class star_cluster(object):
     # evolve the model to the specified time removing unbound particles and drifting them
     def evolve_model(self,tend):
         self.remove_unbound_particles()
-        self.drift_unbound_particles(tend-self.code.model_time)
+        if len(self.unbound) > 0:
+            self.drift_unbound_particles(tend-self.code.model_time)
         self.code.evolve_model(tend)
         
     # remove unbound particles from the system
     def remove_unbound_particles(self):
-        bound=self.code.particles.bound_subset(self.converter) # maybe rewrite this ourselves using a code to make it faster? Also need to include Jacobi radius from galaxy somehow
+        bound=self.code.particles.bound_subset(unit_converter=self.converter) # maybe rewrite this ourselves using a code to make it faster? Also need to include Jacobi radius from galaxy somehow
         new_unbound = self.code.particles.difference(bound)
         self.unbound.add_particles(new_unbound)
         self.code.particles.remove_particles(new_unbound)
@@ -149,9 +150,12 @@ class star_cluster(object):
         return self.code.particles
     
     # the unbound particles
-    @property
+    # @property
     def unbound(self):
         return self.unbound
+    # @unbound.setter
+    # def unbound(self, particle_set):
+    #     self.unbound = particle_set
     
     # this should return all the particles so they are kicked correctly
     @property
