@@ -563,6 +563,58 @@ def new_king_model(number_of_particles, W0, *list_arguments, **keyword_arguments
         b --> -infinity.
     :argument verbose: Be verbose (output is suppressed by default) [False]
     :argument return_rt_rvir: return the ratio of tidal and virial radii [False]
+
     """
+
     uc = MakeKingModel(number_of_particles, W0, *list_arguments, **keyword_arguments)
     return uc.result
+
+
+def new_physical_king_model(W0, masses= None, tidal_radius=None, half_mass_radius=None, *list_arguments, **keyword_arguments):
+    """
+    Create a King model with the given number of particles and King dimensionless
+    depth W0. Returns a set of particles with equal mass and positions and velocities
+    distributed to fit a King distribution model. The model is centered around the
+    origin. Positions and velocities are optionally scaled such that the kinetic and
+    potential energies are 0.25 and -0.5 in nbody-units, respectively.
+
+    :argument number_of_particles: Number of particles to include in the King model
+    :argument W0: King dimensionless depth, allowed range: < 0, 16 ]
+    :argument convert_nbody:  When given will convert the resulting set to SI units
+    :argument do_scale: scale the result to exact nbody units (M=1, K=0.25, U=-0.5)
+    :argument beta:  Steve's rescaling parameter (< 1) [0]. Models with b > 0 are just
+        rescaled King models; models with b < 0 approach isothermal spheres as
+        b --> -infinity.
+    :argument verbose: Be verbose (output is suppressed by default) [False]
+    :argument return_rt_rvir: return the ratio of tidal and virial radii [False]
+
+    Our added parameters to create a King model in physical units scaled correctly:
+    :argument tidal_radius: the target tidal radius [None]
+    :argument half_mass_radius: the target half mass radius [None]
+    :argument mass: the target mass [None]
+    """
+
+
+    if not masses:
+            raise exceptions.AmuseException("Mass is required")
+    
+    number_of_particles = len(masses)
+    uc = MakeKingModel(1, W0, return_radial_ratio=True)
+    cluster, rt_rvir, rh_rt = uc.result
+    if tidal_radius:
+        converter = nbody_system.nbody_to_si(masses.sum(), tidal_radius/rt_rvir)
+        uc = MakeKingModel(number_of_particles, W0,convert_nbody=converter)
+        cluster = uc.result
+        cluster.mass=masses
+        cluster.move_to_center()
+        cluster.scale_to_standard(converter)
+    elif half_mass_radius:
+        converter = nbody_system.nbody_to_si(masses.sum(), half_mass_radius/rt_rvir/rh_rt)
+        uc = MakeKingModel(number_of_particles, W0,convert_nbody=converter)
+        cluster = uc.result
+        cluster.mass=masses
+        cluster.move_to_center()
+        cluster.scale_to_standard(converter)
+    
+    
+    return cluster

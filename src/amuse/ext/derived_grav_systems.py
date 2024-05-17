@@ -1,8 +1,9 @@
 from amuse.units import constants
 from amuse.datamodel import Particles, ParticlesSuperset
 from amuse.units import nbody_system
-from amuse.ic.kingmodel import new_king_model
-from amuse.ic.brokenimf import new_kroupa_mass_distribution
+from amuse.ic.kingmodel import new_physical_king_model
+from amuse.ic.brokenimf import new_masses
+from amuse.couple import bridge
 class center_of_mass(object):
     """
     com=center_of_mass(grav_instance)
@@ -85,29 +86,45 @@ class star_cluster(object):
     get_gravity_at_point, get_potential_at_point reimplemented in 
     base_class
     """
-    def __init__(self,code,code_converter, r_half, W0, r_vir, r_tidal, n_particles, M_cluster):
+    def __init__(self,code,code_converter, W0, r_tidal=None,r_half=None, n_particles=None, M_cluster=False, field_code=None,field_code_number_of_workers=1):
         self.converter=code_converter
         self.code=code(self.converter)
+        self.field_code=field_code
+        self.field_code_number_of_workers=field_code_number_of_workers
 
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scalign velocities accordingly
-        self.initialize_king_model(n_particles, W0, r_tidal, r_half, M_cluster)
+        self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
 
         self.center_of_mass=center_of_mass(self.code.particles)
         self.unbound= Particles()
 
+        # initialize the code for get_gravity_at_point and get_potential_at_point
+        self.gravity_from_cluster = bridge.CalculateFieldForCodes(
+            self.new_code_to_calculate_gravity,               
+            input_codes=[self.code],                       
+            )
+
+    def new_code_to_calculate_gravity(self): 
+            result = self.field_code(self.converter, number_of_workers=self.field_code_number_of_workers)  # this can be GPU based at some point
+            return result
     # initialize the king model
-    def initialize_king_model(self, n_particles, W0, r_tidal, M_cluster):
-        temp, rt_rvir = new_king_model(1, W0, return_rt_rvir=True)
+    def initialize_king_model(self, n_particles, M_cluster, W0, r_tidal=None, r_half=None):
         # we either fix the number of stars, or the total mass (down to stochastic fluctuations)
-        m_stars = new_kroupa_mass_distribution(n_particles)
-        converter = nbody_system.nbody_to_si(M_cluster, r_tidal/rt_rvir)
-        cluster = new_king_model(n_particles, W0, do_scale=True, convert_nbody=converter)
+        m_stars = new_masses(stellar_mass=M_cluster,number_of_stars=n_particles)
+        cluster = new_physical_king_model(W0, masses=m_stars, tidal_radius=r_tidal, half_mass_radius=r_half)
         self.code.particles.add_particles(cluster)
 
     # get the gravity at a point
     def get_gravity_at_point(self,radius,x,y,z):
-        ax,ay,az=self.center_of_mass.get_gravity_at_point(radius,x,y,z)
+        # ax,ay,az=self.center_of_mass.get_gravity_at_point(radius,x,y,z) # here we should set radius automatically to the half mass radius (if it was plummer) - maybe diff for king?
+        ax,ay,az=self.gravity_from_cluster.get_gravity_at_point(radius,x,y,z)
         return ax,ay,az
+    
+    # get the potential at a point
+    def get_potential_at_point(self,radius,x,y,z):
+        # phi=self.center_of_mass.get_potential_at_point(radius,x,y,z)
+        phi = self.gravity_from_cluster.get_potential_at_point(radius,x,y,z)
+        return phi
     
     # evolve the model to the specified time removing unbound particles and drifting them
     def evolve_model(self,tend):
@@ -117,19 +134,14 @@ class star_cluster(object):
         
     # remove unbound particles from the system
     def remove_unbound_particles(self):
-        bound=self.code.particles.bound_subset(self.converter)
-        unbound = self.code.particles.difference(bound)
-        self.unbound.add_particles(unbound)
-        self.code.particles.remove_particles(unbound)
+        bound=self.code.particles.bound_subset(self.converter) # maybe rewrite this ourselves using a code to make it faster? Also need to include Jacobi radius from galaxy somehow
+        new_unbound = self.code.particles.difference(bound)
+        self.unbound.add_particles(new_unbound)
+        self.code.particles.remove_particles(new_unbound)
     
     # drift unbound particles
     def drift_unbound_particles(self, dt):
        self.unbound.position += self.unbound.velocity * dt
-
-    # get the potential at a point
-    def get_potential_at_point(self,radius,x,y,z):
-        phi=self.center_of_mass.get_potential_at_point(radius,x,y,z)
-        return phi
     
     # the bound particles
     @property
