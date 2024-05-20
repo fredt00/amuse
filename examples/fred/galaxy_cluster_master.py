@@ -111,7 +111,7 @@ def setup_galaxy_from_file(galaxy_file):
         galaxy= snapshot.select(lambda m: m<9.99e4 | units.MSun,["mass"])
         break
     galaxy.move_to_center()
-    return galaxy, converter_gal
+    return galaxy
 
 # The main function that sets up the simulation and evolves it
 def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
