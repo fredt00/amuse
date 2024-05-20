@@ -98,11 +98,28 @@ def setup_analytic_halo(galaxy):
     halo_model = NFW_profile(rho_0_fit_menc, scale_radius_fit_menc)
     return halo_model
 
+def read_and_get_last_snapshot(filename):
+    all_snap = io.read_set_from_file(filename)
+    for snapshot in all_snap.history:
+        restart_time = snapshot.get_timestamp().in_(units.Myr)
+    return snapshot, restart_time
+
+def setup_galaxy_from_file(galaxy_file):
+    print('reading in galaxy IC from ' + galaxy_file)
+    galaxy_all = io.read_set_from_file(galaxy_file, close_file=True)
+    for snapshot in galaxy_all.history:
+        galaxy= snapshot.select(lambda m: m<9.99e4 | units.MSun,["mass"])
+        break
+    galaxy.move_to_center()
+    converter_gal = nbody_system.nbody_to_si(galaxy.mass.sum(),dt)
+    return galaxy, converter_gal
+
 # The main function that sets up the simulation and evolves it
-def main(Nh=10000, n=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
+def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
           Rh=4.43 | units.kpc,diagnostic=20 | units.Myr, t_settle=1|units.Gyr,
             Xinit=4.43 | units.kpc, eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None, beta=3,
-            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=4.35|units.parsec, M_cluster=None):
+            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=None,r_tidal=None, M_cluster=None):
+    # check input options
     options = locals()
     print('your specified options are', options)
     if do_scale== 'False': do_scale=False
@@ -114,26 +131,27 @@ def main(Nh=10000, n=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|
     gadget_options = {'number_of_workers' : 27, 'epsilon_squared' : (88.6  | units.pc)**2, 'begin_time': 0.0 | units.Myr,
                        'max_size_timestep':2*dt,'time_max':dt*2.**14., 'time_limit_cpu': 0.1 | units.yr,
                        'timestep_accuracy_parameter':0.01, 'opening_angle':0.5}
-
+    if (not r_half) and (not r_tidal): 
+        print(" ERROR: you must specify r_half or r_tidal")
+        return -1
+    if r_half and r_tidal:
+        print(" ERROR: you cannot specify both r_half and r_tidal")
+        return -1
+    if (not M_cluster) and (not N_cluster):
+        print(" ERROR: you must specify either M_cluster or N_cluster")
+        return -1
+    if M_cluster and N_cluster:
+        print(" ERROR: you cannot specify both M_cluster and N_cluster")
+        return -1
+    
     if restart_file:
         # if restart then read in the file - we can probably just see if file is set and so don't need other restart option thing
-        all_snap_cluster = io.read_set_from_file('cluster_'+restart_file)
-        all_snap_galaxy = io.read_set_from_file('galaxy_'+restart_file)
-        # find a way to get the last snapshot without looping through
-        for snapshot in all_snap_galaxy.history:
-            restart_time = snapshot.get_timestamp().in_(units.Myr)
-        galaxy = snapshot
-        for snapshot in all_snap_cluster.history:
-            if snapshot.get_timestamp().in_(units.Myr)==restart_time: break
-        cluster = snapshot
-        converter_gal = nbody_system.nbody_to_si(galaxy.mass.sum(),dt)
+        galaxy, restart_time = read_and_get_last_snapshot('galaxy_'+restart_file)
+        cluster, _ = read_and_get_last_snapshot('cluster_'+restart_file)
         print('restarting from', restart_time, ' using file', restart_file)
-        del(all_snap_galaxy)
-        del(all_snap_cluster)
-        del(snapshot)
     else:
          # define the file name and save ICs. The file name should be some combination of parameters
-        restart_file= 'sim_analytic_{:s}_df_model_{:s}_n{:1g}m{:g}W{:g}X{:g}.hdf5'.format(str(analytic),str(df_model), n,mstar.value_in(units.MSun),W0,
+        restart_file= 'sim_analytic_{:s}_df_model_{:s}_Mc{:g}W{:g}X{:g}.hdf5'.format(str(analytic),str(df_model), M_cluster.value_in(units.MSun),W0,
                                                                 Xinit.value_in(units.kpc))
         print('setting up ICs to be saved to ' + restart_file)
         if os.path.exists('cluster_'+restart_file):
@@ -142,52 +160,43 @@ def main(Nh=10000, n=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|
         restart_time = 0 |units.Myr
         # set up the galaxy
         if galaxy_file:
-            print('reading in galaxy IC from ' + galaxy_file)
-            galaxy_all = io.read_set_from_file(galaxy_file, close_file=True)
-            for snapshot in galaxy_all.history:
-                galaxy= snapshot.select(lambda m: m<9.99e4 | units.MSun,["mass"])
-                break
-    # bin the particles
-            galaxy.move_to_center()
-            converter_gal = nbody_system.nbody_to_si(galaxy.mass.sum(),dt)
-            del(galaxy_all)
+            galaxy, converter_gal = setup_galaxy_from_file(galaxy_file)
         else:
-            galaxy, converter_gal, = setup_galaxy(Nh=Nh, Mh=Mh, Rscale=Rh,t_settle=t_settle,gadget_options=gadget_options, beta=beta, dt=dt, do_scale=do_scale)
-            
-        # set up the cluster
-        Rinit = [Xinit.value_in(units.kpc), 0, 0] | units.kpc
+            galaxy, converter_gal, = setup_galaxy(Nh=N_halo, Mh=Mh, Rscale=Rh,t_settle=t_settle,gadget_options=gadget_options, beta=beta, dt=dt, do_scale=do_scale)
 
         # set up the semi-analytic dynamical friction model
         if df_model or analytic:
             halo_model = setup_analytic_halo(galaxy)
         
+        # set up the cluster
+        Rinit = [Xinit.value_in(units.kpc), 0, 0] | units.kpc
+        # find circular velocity at Rinit
         if analytic:
             Vy = halo_model.circular_velocity(Xinit)
         else:
-            # instead calculate based on the mass enclosed within the radius
             selection = (galaxy.position).lengths()<Rinit[0]
             Menc=galaxy[selection].mass.sum()
             Vy  =(constants.G * Menc/Rinit.length())**.5
 
         Vinit = [0,Vy.value_in(units.kms), 0] | units.kms
-        print('initialising cluster on orbit with R=', Rinit, 'V=', Vinit)
         t_orb=(2 * np.pi*Xinit/Vy)
+        print('initialising cluster on orbit with R=', Rinit, 'V=', Vinit, "t_orb=", t_orb.in_(units.Myr))
         print('bridge timestep/torb is', dt/t_orb)
 
         # set up code for evolution of cluster
-        converter_petar = nbody_system.nbody_to_si(dt, cluster.total_mass())
+        converter_petar = nbody_system.nbody_to_si(dt, M_cluster)
         # test mass or cluster
-        if n==1:
+        if N_cluster==1:
             gravity_clu = BHTree(converter_petar, number_of_workers = 1)
             gravity_clu.parameters.timestep = 1/2. | nbody_system.time
             cluster = setup_test_particle(Rinit, Vinit, mstar)
             gravity_clu.particles.add_particles(cluster)
         else:
-            cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=n_cluster, M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=1)
+            cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster, M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=1)
             cluster.particles.position += Rinit
             cluster.particles.velocity += Vinit
-            io.write_set_to_file(cluster.unbound,'stream_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
-        io.write_set_to_file(cluster.bound,'cluster_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
+            io.write_set_to_file(cluster.unbound.particles,'stream_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
+        io.write_set_to_file(cluster.bound.particles,'cluster_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
         if not analytic:
             io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
 
@@ -198,11 +207,6 @@ def main(Nh=10000, n=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|
         gravity_gal.parameters.use_hydro_flag=False
         gravity_gal.particles.add_particles(galaxy)
         channel_to_galaxy = gravity_gal.particles.new_channel_to(galaxy)
-
-    if df_model or analytic:
-        df_model = dynamical_friction(halo_model, cluster.code, r_half = (.5**(-2/3)-1)**-.5 * (10 | units.pc) )
-
-    if not analytic:
         # set up gravity calculators
         def new_galaxy_code_to_calculate_gravity():
             result = FastKick(converter_gal, number_of_workers=13)
@@ -212,25 +216,31 @@ def main(Nh=10000, n=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|
             new_galaxy_code_to_calculate_gravity,              # the code that calculates the acceleration field
             input_codes=[gravity_gal],                       # the codes to calculate the acceleration field of
             )
-    
+
+    if df_model or analytic:
+        df_model = dynamical_friction(halo_model, cluster.bound, r_half = (.5**(-2/3)-1)**-.5 * (10 | units.pc) )
+
     # set up the bridge
-    print('bridge time step is', dt.in_(units.myr))
-    
     integrator=bridge.Bridge(verbose=True,timestep=dt,use_threading=True)
-    
     if analytic:
         integrator.add_system(cluster,(df_model,halo_model,), do_sync=True)
+        integrator.add_system(cluster.unbound,(df_model,halo_model,cluster,), do_sync=True)
     elif df_model:
         system=bridge.GravityCodeInField(cluster, (gravity_from_galaxy,df_model,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
+        unbound_system=bridge.GravityCodeInField(cluster.unbound, (gravity_from_galaxy,df_model,cluster,), do_sync=True, verbose=True,
+                    radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
         integrator.add_code(system)
+        integrator.add_code(unbound_system)
         integrator.add_code(gravity_gal)
     else:
         system=bridge.GravityCodeInField(cluster, (gravity_from_galaxy,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
+        unbound_system=bridge.GravityCodeInField(cluster.unbound, (gravity_from_galaxy,cluster,), do_sync=True, verbose=True,
+                    radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
         integrator.add_code(system)
-
-        system_cluster=bridge.GravityCodeInField(gravity_gal, cluster, do_sync=True, verbose=True,
+        integrator.add_code(unbound_system)
+        system_cluster=bridge.GravityCodeInField(gravity_gal, (cluster,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=(0.01 | units.pc)**2)
         integrator.add_code(system_cluster)
 
@@ -242,13 +252,14 @@ def main(Nh=10000, n=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|
         print('evolved to', time.in_(units.Myr)) 
         if not analytic:
             channel_to_galaxy.copy_attributes(["mass", 'x','y','z', 'vx', 'vy', 'vz'])
-            print('cluster distance from galactic centre', (cluster.bound.center_of_mass()-galaxy.center_of_mass()).length().in_(units.kpc))
+            print('cluster distance from galactic centre', (cluster.bound.particles.center_of_mass()-galaxy.center_of_mass()).length().in_(units.kpc))
         else:
-            print('cluster distance from galactic centre', cluster.bound.center_of_mass().length().in_(units.kpc))
+            print('cluster distance from galactic centre', cluster.bound.particles.center_of_mass().length().in_(units.kpc))
         # save output
         if time.value_in(units.Myr) % diagnostic.value_in(units.Myr)==0:
-            io.write_set_to_file(cluster.bound,'cluster_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
-            io.write_set_to_file(cluster.unbound,'unbound_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
+            cluster.transfer_unbound_particles()
+            io.write_set_to_file(cluster.bound.particles,'cluster_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
+            io.write_set_to_file(cluster.unbound.particles,'unbound_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
             io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
         sys.stdout.flush()
     gravity_gal.stop()
@@ -276,7 +287,7 @@ def new_option_parser():
                       help="use analytic model halo and dynamical friction? [%default]")
     
     ###### GALAXY OPTIONS
-    result.add_option("-N", "--Nhalo", dest="Nh", type="int",default = 1e6,
+    result.add_option("-N", "--Nhalo", dest="N_halo", type="int",default = 1e6,
                       help="number of stars in the galaxy dark matter halo [%default]")
     result.add_option("-M", unit=units.MSun,
                       dest="Mh", type="float",default = 1e10|units.MSun,
@@ -294,13 +305,13 @@ def new_option_parser():
     ######## CLUSTER OPTIONS
     result.add_option("-W", dest="W0", type="float", default = 5.0, # 5 is typical of open clusters and rapidly dissolving GCs, 7 for older, core collapsed objects
                       help="Dimension-less depth of the King potential (W0) [%default]")
-    result.add_option("-n", dest="n", type="int",default = None,
+    result.add_option("-n", dest="N_cluster", type="int",default = None,
                       help="number of stars in the cluster [%default]") # note that currently we have equal mass stars so no option needed for that yet
     result.add_option("--r_half", unit=units.parsec,
                       dest="r_half", type="float",default = 4.35|units.parsec,
                       help="cluser half mass radius [%default]")
     result.add_option("--M_cluster", unit=units.MSun,
-                      dest="M_cluster", type="float",default = None,
+                      dest="M_cluster", type="float",default = 1e4 | units.MSun,
                       help="mass of the cluster [%default]")
     result.add_option("-m", unit=units.MSun,
                       dest="mstar", type="float",default = 1 |units.MSun,
