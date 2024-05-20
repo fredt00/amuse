@@ -223,11 +223,11 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
     integrator=bridge.Bridge(verbose=True,timestep=dt,use_threading=True)
     if analytic:
         integrator.add_system(cluster,(df_model,halo_model,), do_sync=True)
-        integrator.add_system(cluster.unbound,(df_model,halo_model,cluster,), do_sync=True)
+        integrator.add_system(cluster.unbound,(halo_model,cluster,), do_sync=True)
     elif df_model:
         system=bridge.GravityCodeInField(cluster, (gravity_from_galaxy,df_model,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
-        unbound_system=bridge.GravityCodeInField(cluster.unbound, (gravity_from_galaxy,df_model,cluster,), do_sync=True, verbose=True,
+        unbound_system=bridge.GravityCodeInField(cluster.unbound, (gravity_from_galaxy,cluster,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
         integrator.add_code(system)
         integrator.add_code(unbound_system)
