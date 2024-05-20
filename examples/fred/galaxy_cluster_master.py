@@ -117,7 +117,7 @@ def setup_galaxy_from_file(galaxy_file):
 def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
           Rh=4.43 | units.kpc,diagnostic=20 | units.Myr, t_settle=1|units.Gyr,
             Xinit=4.43 | units.kpc, eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None, beta=3,
-            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=None,r_tidal=None, M_cluster=None):
+            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=None,r_tidal=None, M_cluster=None, r_nfw=None, rho_nfw=None):
     # check input options
     options = locals()
     print('your specified options are', options)
@@ -158,14 +158,17 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
             return -1
         restart_time = 0 |units.Myr
         # set up the galaxy
-        if galaxy_file:
-            galaxy = setup_galaxy_from_file(galaxy_file)
+        if df_model or analytic and (rho_nfw and r_nfw):
+            halo_model = NFW_profile(rho_nfw, r_nfw)
         else:
-            galaxy = setup_galaxy(Nh=N_halo, Mh=Mh, Rscale=Rh,t_settle=t_settle,gadget_options=gadget_options, beta=beta, dt=dt, do_scale=do_scale)
-        converter_gal = nbody_system.nbody_to_si(galaxy.total_mass(),dt)
-        # set up the semi-analytic dynamical friction model
-        if df_model or analytic:
-            halo_model = setup_analytic_halo(galaxy)
+            if galaxy_file:
+                galaxy = setup_galaxy_from_file(galaxy_file)
+            else:
+                galaxy = setup_galaxy(Nh=N_halo, Mh=Mh, Rscale=Rh,t_settle=t_settle,gadget_options=gadget_options, beta=beta, dt=dt, do_scale=do_scale)
+            converter_gal = nbody_system.nbody_to_si(galaxy.total_mass(),dt)
+            # set up the semi-analytic dynamical friction model
+            if df_model or analytic:
+                halo_model = setup_analytic_halo(galaxy)
         
         # set up the cluster
         Rinit = [Xinit.value_in(units.kpc), 0, 0] | units.kpc
@@ -191,7 +194,7 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
             cluster = setup_test_particle(Rinit, Vinit, mstar)
             gravity_clu.particles.add_particles(cluster)
         else:
-            cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster, M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=1,code_number_of_workers=4)
+            cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster, M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=1,code_number_of_workers=1)
             cluster.particles.position += Rinit
             cluster.particles.velocity += Vinit
             io.write_set_to_file(cluster.unbound.particles,'stream_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
@@ -217,7 +220,7 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
             )
 
     if df_model or analytic:
-        df_model = dynamical_friction(halo_model, cluster.bound, r_half = (.5**(-2/3)-1)**-.5 * (10 | units.pc) )
+        df_model = dynamical_friction(halo_model, cluster.bound.particles, r_half = (.5**(-2/3)-1)**-.5 * (10 | units.pc) )
 
     # set up the bridge
     integrator=bridge.Bridge(verbose=True,timestep=dt,use_threading=True)
@@ -300,6 +303,12 @@ def new_option_parser():
     result.add_option("-g","--galfile",
                       dest="galaxy_file", default = None,
                       help="A file to read in initial [%default]")
+    result.add_option("--r_nfw",  unit=units.kpc,
+                      dest="r_nfw", type="float",default = None,
+                      help="galaxy halo scale radius for analytic profiles [%default]")
+    result.add_option("--rho_nfw",  unit=units.MSun/units.kpc**3,
+                      dest="rho_nfw", type="float",default = None,
+                      help="galaxy halo scale density for analytic profile [%default]")
     
     ######## CLUSTER OPTIONS
     result.add_option("-W", dest="W0", type="float", default = 5.0, # 5 is typical of open clusters and rapidly dissolving GCs, 7 for older, core collapsed objects

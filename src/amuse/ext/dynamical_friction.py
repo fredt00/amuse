@@ -17,23 +17,22 @@ class dynamical_friction():
     :argument code: the gravity (or drift) code containing the satellite
     :argument r_half: the half mass radius of the satellite to be used in the case of a point mass
     """
-    def __init__(self, density_model, code, G=constants.G, r_half=4.35 | units.pc):
+    def __init__(self, density_model, particles, G=constants.G, r_half=4.35 | units.pc):
         self.density_model = density_model
-        self.code=code # we need to be able to access latest version of the particles... ideally without storing twice
+        self.particles=particles # we need to be able to access latest version of the particles... ideally without storing twice
         self.G = G
         self.r_half = r_half
 
     def set_rv_mass(self):
         """update the satellite properties in the dynamical friction model
         """
-        self.x, self.y, self.z = self.code.particles.center_of_mass()
-        self.velocity= self.code.particles.center_of_mass_velocity()
+        self.x, self.y, self.z = self.particles.center_of_mass()
+        self.velocity= self.particles.center_of_mass_velocity()
         self.r = np.sqrt(self.x ** 2.0 + self.y ** 2.0 + self.z ** 2.0)
-
         # find the current half mass radius - slow!
-        if len(self.code.particles)!=1:
-            self.r_half = self.code.particles.LagrangianRadii(mf=[0.5])[0][0]
-        self.mass = self.code.particles.mass.sum()
+        if len(self.particles)>1:
+            self.r_half = self.particles.LagrangianRadii(mf=[0.5])[0][0]
+        self.mass = self.particles.mass.sum()
 
     def get_gravity_at_point(self,eps,x,y,z):
         accel_dynamical = self.dynamical_friction()
@@ -59,10 +58,6 @@ class dynamical_friction():
 
     def thermal_integral(self, x):
         return math.erf(x) - 2*x/np.pi**.5 * np.exp(-x**2)
-    
-    @property
-    def particles(self):
-        return self.code.particles
     
 
 class NFW_profile(LiteratureReferencesMixIn):
