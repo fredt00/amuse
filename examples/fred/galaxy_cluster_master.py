@@ -70,7 +70,7 @@ def setup_galaxy(Nh=1e5, Mh=1e10 | units.MSun,Rscale=4.1 | units.kpc, t_settle=0
         gravity_gal.stop()
     # recenter
     galaxy.move_to_center()
-    return galaxy,converter_gadget
+    return galaxy
 
 def setup_analytic_halo(galaxy):
     galaxy.move_to_center()
@@ -159,10 +159,10 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
         restart_time = 0 |units.Myr
         # set up the galaxy
         if galaxy_file:
-            galaxy, converter_gal = setup_galaxy_from_file(galaxy_file)
+            galaxy = setup_galaxy_from_file(galaxy_file)
         else:
             galaxy = setup_galaxy(Nh=N_halo, Mh=Mh, Rscale=Rh,t_settle=t_settle,gadget_options=gadget_options, beta=beta, dt=dt, do_scale=do_scale)
-            converter_gal = nbody_system.nbody_to_si(galaxy.total_mass(),dt)
+        converter_gal = nbody_system.nbody_to_si(galaxy.total_mass(),dt)
         # set up the semi-analytic dynamical friction model
         if df_model or analytic:
             halo_model = setup_analytic_halo(galaxy)
