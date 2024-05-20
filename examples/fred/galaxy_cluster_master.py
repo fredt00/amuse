@@ -98,21 +98,6 @@ def setup_analytic_halo(galaxy):
     halo_model = NFW_profile(rho_0_fit_menc, scale_radius_fit_menc)
     return halo_model
 
-def read_and_get_last_snapshot(filename):
-    all_snap = io.read_set_from_file(filename)
-    for snapshot in all_snap.history:
-        restart_time = snapshot.get_timestamp().in_(units.Myr)
-    return snapshot, restart_time
-
-def setup_galaxy_from_file(galaxy_file):
-    print('reading in galaxy IC from ' + galaxy_file)
-    galaxy_all = io.read_set_from_file(galaxy_file, close_file=True)
-    for snapshot in galaxy_all.history:
-        galaxy= snapshot.select(lambda m: m<9.99e4 | units.MSun,["mass"])
-        break
-    galaxy.move_to_center()
-    return galaxy
-
 # The main function that sets up the simulation and evolves it
 def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
           Rh=4.43 | units.kpc,diagnostic=20 | units.Myr, t_settle=1|units.Gyr,
@@ -159,10 +144,21 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
         restart_time = 0 |units.Myr
         # set up the galaxy
         if galaxy_file:
-            galaxy, converter_gal = setup_galaxy_from_file(galaxy_file)
-        else:
-            galaxy = setup_galaxy(Nh=N_halo, Mh=Mh, Rscale=Rh,t_settle=t_settle,gadget_options=gadget_options, beta=beta, dt=dt, do_scale=do_scale)
+            print('reading in galaxy IC from ' + galaxy_file)
+            galaxy_all = io.read_set_from_file(galaxy_file, close_file=True)
+            for snapshot in galaxy_all.history:
+                galaxy= snapshot.select(lambda m: m<9.99e4 | units.MSun,["mass"])
+                break
+    # bin the particles
+            galaxy.move_to_center()
             converter_gal = nbody_system.nbody_to_si(galaxy.mass.sum(),dt)
+            del(galaxy_all)
+        else:
+            galaxy, converter_gal, = setup_galaxy(Nh=Nh, Mh=Mh, Rscale=Rh,t_settle=t_settle,gadget_options=gadget_options, beta=beta, dt=dt, do_scale=do_scale)
+            
+        # set up the cluster
+        Rinit = [Xinit.value_in(units.kpc), 0, 0] | units.kpc
+
         # set up the semi-analytic dynamical friction model
         if df_model or analytic:
             halo_model = setup_analytic_halo(galaxy)
