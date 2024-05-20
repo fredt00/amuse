@@ -200,7 +200,7 @@ def main(Nh=10000, n=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|
         channel_to_galaxy = gravity_gal.particles.new_channel_to(galaxy)
 
     if df_model or analytic:
-        df_model = dynamical_friction(halo_model, gravity_clu, r_half = (.5**(-2/3)-1)**-.5 * (10 | units.pc) )
+        df_model = dynamical_friction(halo_model, cluster.code, r_half = (.5**(-2/3)-1)**-.5 * (10 | units.pc) )
 
     if not analytic:
         # set up gravity calculators
@@ -248,10 +248,11 @@ def main(Nh=10000, n=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|
         # save output
         if time.value_in(units.Myr) % diagnostic.value_in(units.Myr)==0:
             io.write_set_to_file(cluster.bound,'cluster_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
-            io.write_set_to_file(cluster.unbound,'stream_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
+            io.write_set_to_file(cluster.unbound,'unbound_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
+            io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
         sys.stdout.flush()
     gravity_gal.stop()
-    gravity_clu.stop()
+    # gravity_clu.stop()
 
 # The parser for taking the users inputs following the python script at input
 def new_option_parser():

@@ -603,7 +603,7 @@ def new_particle_from_cluster_core(particles, unit_converter=None, density_weigh
 
 def bound_subset(particles, tidal_radius=None, unit_converter=None, density_weighting_power=2,
         smoothing_length_squared=zero, G=constants.G, core=None,
-        reuse_hop=False, hop=HopContainer(), gravity_code=None):
+        reuse_hop=False, hop=HopContainer(), gravity_code=None, strict=False):
     """
     find the particles bound to the cluster. Returns a subset of bound particles.
 
@@ -637,8 +637,10 @@ def bound_subset(particles, tidal_radius=None, unit_converter=None, density_weig
       boundary_radius2=r2.max()
     else:
       boundary_radius2=tidal_radius**2
-    
-    bs=numpy.where( (r2 <= boundary_radius2) & (pot+0.5*v2 < zero) )[0]
+    if strict:
+        bs=numpy.where( (r2 <= boundary_radius2) | (pot+0.5*v2 < zero) )[0]
+    else:
+        bs=numpy.where( (r2 <= boundary_radius2) & (pot+0.5*v2 < zero) )[0]
     return particles[bs]
 
 def mass_segregation_Gini_coefficient(particles, unit_converter=None, density_weighting_power=2,

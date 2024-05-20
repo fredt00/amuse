@@ -1,9 +1,13 @@
 from amuse.units import constants
 from amuse.datamodel import Particles, ParticlesSuperset
+from amuse.datamodel.particle_attributes import HopContainer, particle_potential
 from amuse.units import nbody_system
 from amuse.ic.kingmodel import new_physical_king_model
 from amuse.ic.brokenimf import new_masses
 from amuse.couple import bridge
+import numpy as np
+from amuse.units.quantities import zero
+from amuse.units import units
 class center_of_mass(object):
     """
     com=center_of_mass(grav_instance)
@@ -92,10 +96,12 @@ class star_cluster(object):
         self.field_code=field_code
         self.field_code_number_of_workers=field_code_number_of_workers
 
+        self.r_tidal=r_tidal
+
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scalign velocities accordingly
         self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
 
-        self.center_of_mass=center_of_mass(self.code.particles)
+        # self.center_of_mass=center_of_mass(self.code.particles)
         self.unbound = Particles()
 
         # initialize the code for get_gravity_at_point and get_potential_at_point
@@ -128,18 +134,41 @@ class star_cluster(object):
     
     # evolve the model to the specified time removing unbound particles and drifting them
     def evolve_model(self,tend):
-        self.remove_unbound_particles()
+        self.remove_unbound_particles_old()
         if len(self.unbound) > 0:
             self.drift_unbound_particles(tend-self.code.model_time)
         self.code.evolve_model(tend)
         
     # remove unbound particles from the system
     def remove_unbound_particles(self):
-        bound=self.code.particles.bound_subset(unit_converter=self.converter) # maybe rewrite this ourselves using a code to make it faster? Also need to include Jacobi radius from galaxy somehow
+        core = self.bound.cluster_core(self.converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
+        position=self.bound.position-core.position
+        velocity=self.bound.velocity-core.velocity
+        v2=velocity.lengths_squared()
+        r2=position.lengths_squared()
+        # Compute potential of particles outside tidal radius
+        boundary_radius2 = self.bound.LagrangianRadii(mf=[0.9])[0][0]**2#self.r_tidal**2
+
+        outside_boundary = np.where((r2 > boundary_radius2))[0]
+        outside_particles = self.bound[outside_boundary]
+        if len(outside_particles)>0:
+            # Compute potential of particles outside tidal radius
+            pot = [] | units.m**2/units.s**2
+            for particle in outside_particles:
+                pot.append(particle_potential(self.bound,particle))
+            print(pot)
+            # Remove particles with total energy greater than zero
+            unbound_indices = np.where((pot + 0.5 * v2[outside_boundary] > zero))[0]
+            unbound_particles = outside_particles[unbound_indices]
+            self.code.particles.remove_particles(unbound_particles)
+            self.unbound.add_particles(unbound_particles)
+
+    def remove_unbound_particles_old(self):
+        bound = self.code.particles.bound_subset(unit_converter=self.converter,tidal_radius=self.bound.LagrangianRadii(mf=[0.9])[0][0], strict=True)
         new_unbound = self.code.particles.difference(bound)
         self.unbound.add_particles(new_unbound)
         self.code.particles.remove_particles(new_unbound)
-    
+
     # drift unbound particles
     def drift_unbound_particles(self, dt):
        self.unbound.position += self.unbound.velocity * dt
@@ -148,14 +177,6 @@ class star_cluster(object):
     @property
     def bound(self):
         return self.code.particles
-    
-    # the unbound particles
-    # @property
-    # def unbound(self):
-    #     return self.unbound
-    # @unbound.setter
-    # def unbound(self, particle_set):
-    #     self.unbound = particle_set
     
     # this should return all the particles so they are kicked correctly
     @property
