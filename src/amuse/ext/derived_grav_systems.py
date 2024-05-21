@@ -89,20 +89,23 @@ class star_cluster(object):
     get_gravity_at_point, get_potential_at_point reimplemented in 
     base_class
     """
-    def __init__(self,code,code_converter, W0, r_tidal=None,r_half=None, n_particles=None, M_cluster=False, field_code=None,field_code_number_of_workers=1,code_number_of_workers=1):
+    def __init__(self,code,code_converter,bound_particles=None ,unbound_particles=None,W0=5, r_tidal=None,r_half=None, n_particles=None, M_cluster=False, field_code=None,field_code_number_of_workers=1,code_number_of_workers=1):
         self.converter=code_converter
         self.bound=code(self.converter, mode='openmp',number_of_workers=code_number_of_workers)
+        self.unbound = drifter()
+
         self.field_code=field_code
         self.field_code_number_of_workers=field_code_number_of_workers
 
-        self.r_tidal=r_tidal
-
+        if bound_particles or unbound_particles:
+            self.bound.particles.add_particles(bound_particles)
+            self.unbound.particles.add_particles(unbound_particles)
+        else:
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scaling velocities accordingly
-        self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
+            self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
 
         # self.center_of_mass=center_of_mass(self.code.particles)
-        self.unbound = drifter()
-
+        
         # initialize the code for get_gravity_at_point and get_potential_at_point
         self.gravity_from_cluster = bridge.CalculateFieldForCodes(
             self.new_code_to_calculate_gravity,               

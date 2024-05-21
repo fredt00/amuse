@@ -145,9 +145,14 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
     
     if restart_file:
         # if restart then read in the file - we can probably just see if file is set and so don't need other restart option thing
-        galaxy, restart_time = read_and_get_last_snapshot('galaxy_'+restart_file)
-        cluster, _ = read_and_get_last_snapshot('cluster_'+restart_file)
+        if not analytic:
+            galaxy, restart_time = read_and_get_last_snapshot('galaxy_'+restart_file)
+        cluster_old, restart_time = read_and_get_last_snapshot('cluster_'+restart_file)
+        stream_old, restart_time = read_and_get_last_snapshot('stream_'+restart_file)
+        cluster = star_cluster(code=petar,code_converter=converter_petar, bound_particles=cluster, unbound_particles=stream, field_code=FastKick,field_code_number_of_workers=1,code_number_of_workers=2)
         print('restarting from', restart_time, ' using file', restart_file)
+        del(cluster_old)
+        del(stream_old)
     else:
          # define the file name and save ICs. The file name should be some combination of parameters
         restart_file= 'sim_analytic_{:s}_df_model_{:s}_Mc{:g}W{:g}X{:g}.hdf5'.format(str(analytic),str(df_model), M_cluster.value_in(units.MSun),W0,
@@ -194,7 +199,7 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
             cluster = setup_test_particle(Rinit, Vinit, mstar)
             gravity_clu.particles.add_particles(cluster)
         else:
-            cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster, M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=1,code_number_of_workers=1)
+            cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster, M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=1,code_number_of_workers=2)
             cluster.particles.position += Rinit
             cluster.particles.velocity += Vinit
             io.write_set_to_file(cluster.unbound.particles,'stream_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
@@ -262,7 +267,8 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
             cluster.transfer_unbound_particles()
             io.write_set_to_file(cluster.bound.particles,'cluster_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
             io.write_set_to_file(cluster.unbound.particles,'unbound_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
-            io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
+            if not analytic:
+                io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time+time,append_to_file=True)
         sys.stdout.flush()
     gravity_gal.stop()
     # gravity_clu.stop()
