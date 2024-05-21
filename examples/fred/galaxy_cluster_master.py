@@ -153,7 +153,7 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
         else:
             galaxy, restart_time = read_and_get_last_snapshot('galaxy_'+restart_file)
         cluster_old, restart_time = read_and_get_last_snapshot('cluster_'+restart_file)
-        stream_old, restart_time = read_and_get_last_snapshot('stream_'+restart_file)
+        stream_old, restart_time = read_and_get_last_snapshot('unbound'+restart_file)
         cluster = star_cluster(code=petar,code_converter=converter_petar, bound_particles=cluster, unbound_particles=stream, field_code=FastKick,field_code_number_of_workers=1,code_number_of_workers=2)
         print('restarting from', restart_time, ' using file', restart_file)
         del(cluster_old)
@@ -207,7 +207,7 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
             cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster, M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=1,code_number_of_workers=2)
             cluster.particles.position += Rinit
             cluster.particles.velocity += Vinit
-            io.write_set_to_file(cluster.unbound.particles,'stream_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
+            io.write_set_to_file(cluster.unbound.particles,'unbound_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
         io.write_set_to_file(cluster.bound.particles,'cluster_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
         if not analytic:
             io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
