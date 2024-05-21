@@ -145,7 +145,12 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
     
     if restart_file:
         # if restart then read in the file - we can probably just see if file is set and so don't need other restart option thing
-        if not analytic:
+        if analytic:
+            if rho_nfw and r_nfw:
+                halo_model = NFW_profile(rho_nfw, r_nfw)
+            else:
+                halo_model = setup_analytic_halo(galaxy)
+        else:
             galaxy, restart_time = read_and_get_last_snapshot('galaxy_'+restart_file)
         cluster_old, restart_time = read_and_get_last_snapshot('cluster_'+restart_file)
         stream_old, restart_time = read_and_get_last_snapshot('stream_'+restart_file)
