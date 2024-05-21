@@ -154,7 +154,7 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
             galaxy, restart_time = read_and_get_last_snapshot('galaxy_'+restart_file)
         cluster_old, restart_time = read_and_get_last_snapshot('cluster_'+restart_file)
         stream_old, restart_time = read_and_get_last_snapshot('unbound'+restart_file)
-        cluster = star_cluster(code=petar,code_converter=converter_petar, bound_particles=cluster, unbound_particles=stream, field_code=FastKick,field_code_number_of_workers=1,code_number_of_workers=2)
+        cluster = star_cluster(code=petar,code_converter=converter_petar, bound_particles=cluster_old, unbound_particles=stream_old, field_code=FastKick,field_code_number_of_workers=1,code_number_of_workers=2)
         print('restarting from', restart_time, ' using file', restart_file)
         del(cluster_old)
         del(stream_old)
