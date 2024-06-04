@@ -570,7 +570,7 @@ def new_king_model(number_of_particles, W0, *list_arguments, **keyword_arguments
     return uc.result
 
 
-def new_physical_king_model(W0, masses= None, tidal_radius=None, half_mass_radius=None, *list_arguments, **keyword_arguments):
+def new_physical_king_model(W0, masses= None, tidal_radius=None , half_mass_radius=None, *list_arguments, **keyword_arguments):
     """
     Create a King model with the given number of particles and King dimensionless
     depth W0. Returns a set of particles with equal mass and positions and velocities
@@ -601,14 +601,14 @@ def new_physical_king_model(W0, masses= None, tidal_radius=None, half_mass_radiu
     number_of_particles = len(masses)
     uc = MakeKingModel(1, W0, return_radial_ratio=True)
     cluster, rt_rvir, rh_rt = uc.result
-    if tidal_radius:
+    if tidal_radius.number:
         converter = nbody_system.nbody_to_si(masses.sum(), tidal_radius/rt_rvir)
         uc = MakeKingModel(number_of_particles, W0,convert_nbody=converter)
         cluster = uc.result
         cluster.mass=masses
         cluster.move_to_center()
         cluster.scale_to_standard(converter)
-    elif half_mass_radius:
+    elif half_mass_radius.number:
         converter = nbody_system.nbody_to_si(masses.sum(), half_mass_radius/rt_rvir/rh_rt)
         uc = MakeKingModel(number_of_particles, W0,convert_nbody=converter)
         cluster = uc.result

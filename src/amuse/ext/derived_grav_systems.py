@@ -18,12 +18,13 @@ class center_of_mass(object):
         self.baseclass=baseclass
 
     def get_gravity_at_point(self,radius,x,y,z):
-        mass=self.baseclass.total_mass
-        xx,yy,zz=self.baseclass.get_center_of_mass_position()
+        mass=self.baseclass.total_mass()
+        xx,yy,zz=self.baseclass.center_of_mass()
         
-        eps2=self.baseclass.parameters.epsilon_squared
+        # eps2=self.baseclass.parameters.epsilon_squared+radius**2
         
-        dr2=((xx-x)**2+(yy-y)**2+(zz-z)**2+eps2)
+        # dr2=((xx-x)**2+(yy-y)**2+(zz-z)**2+eps2)
+        dr2=((xx-x)**2+(yy-y)**2+(zz-z)**2+radius**2)
         
         ax=constants.G*mass*(xx-x)/dr2**1.5
         ay=constants.G*mass*(yy-y)/dr2**1.5
@@ -32,10 +33,10 @@ class center_of_mass(object):
         return ax,ay,az
 
     def get_potential_at_point(self,radius,x,y,z):
-        mass=self.baseclass.total_mass
-        xx,yy,zz=self.baseclass.get_center_of_mass_position()
+        mass=self.baseclass.total_mass()
+        xx,yy,zz=self.baseclass.center_of_mass()
         
-        eps2=self.baseclass.parameters.epsilon_squared
+        eps2=self.baseclass.parameters.epsilon_squared + radius**2
         dr2=((xx-x)**2+(yy-y)**2+(zz-z)**2+eps2)
         
         phi=-constants.G*mass/dr2**0.5
@@ -89,14 +90,12 @@ class star_cluster(object):
     get_gravity_at_point, get_potential_at_point reimplemented in 
     base_class
     """
-    def __init__(self,code,code_converter,bound_particles=None ,unbound_particles=None,W0=5, r_tidal=None,r_half=None, n_particles=None, M_cluster=False, field_code=None,field_code_number_of_workers=1,code_number_of_workers=1):
+    def __init__(self,code,code_converter,bound_particles=None ,unbound_particles=None,W0=5, r_tidal=None | units.pc,r_half=None | units.pc, n_particles=None,
+                  M_cluster=False, field_code=None,field_code_number_of_workers=1,code_number_of_workers=1, field_code_mode = 'direct', stellar_evolution = None):
         self.converter=code_converter
         self.bound=code(self.converter, mode='openmp',number_of_workers=code_number_of_workers)
         self.unbound = drifter()
-
-        self.field_code=field_code
-        self.field_code_number_of_workers=field_code_number_of_workers
-
+        
         if bound_particles or unbound_particles:
             self.bound.particles.add_particles(bound_particles)
             self.unbound.particles.add_particles(unbound_particles)
@@ -104,39 +103,69 @@ class star_cluster(object):
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scaling velocities accordingly
             self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
 
-        # self.center_of_mass=center_of_mass(self.code.particles)
-        
-        # initialize the code for get_gravity_at_point and get_potential_at_point
-        self.gravity_from_cluster = bridge.CalculateFieldForCodes(
-            self.new_code_to_calculate_gravity,               
-            input_codes=[self.bound],                       
-            )
+        if field_code_mode == 'center_of_mass':
+            self.field_code_mode = 'center_of_mass'
+            self.center_of_mass=center_of_mass(self.bound.particles)
+        else:
+            self.field_code_mode = 'direct'
+            if field_code_mode!='direct':
+                print('ERROR: you must choose either direct or center_of_mass for field_code_mode. Defaulting to direct.')
+            
+            self.field_code=field_code
+            self.field_code_number_of_workers=field_code_number_of_workers
+            # initialize the code for get_gravity_at_point and get_potential_at_point
+            self.gravity_from_cluster = bridge.CalculateFieldForCodes(
+                self.new_code_to_calculate_gravity,               
+                input_codes=[self.bound],                       
+                )
+            
+        # initialize stellar evolution
+        if stellar_evolution:
+            self.stellar_evolution = stellar_evolution()
+            self.stellar_evolution.particles.add_particles(self.bound.particles)
+            self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius'])
 
     def new_code_to_calculate_gravity(self): 
-            result = self.field_code(self.converter, number_of_workers=self.field_code_number_of_workers)  # this can be GPU based at some point
+            result = self.field_code(self.converter, number_of_workers=self.field_code_number_of_workers, mode='gpu')  # this can be GPU based at some point
             return result
     # initialize the king model
-    def initialize_king_model(self, n_particles, M_cluster, W0, r_tidal=None, r_half=None):
+    def initialize_king_model(self, n_particles, M_cluster, W0, r_tidal=None | units.pc, r_half=None | units.pc):
         # we either fix the number of stars, or the total mass (down to stochastic fluctuations)
-        m_stars = new_masses(stellar_mass=M_cluster,number_of_stars=n_particles)
+        m_stars = new_masses(stellar_mass=M_cluster,number_of_stars=n_particles, upper_mass_limit=100.0 | units.MSun,lower_mass_limit=0.1 | units.MSun)
         cluster = new_physical_king_model(W0, masses=m_stars, tidal_radius=r_tidal, half_mass_radius=r_half)
         self.bound.particles.add_particles(cluster)
 
     # get the gravity at a point
     def get_gravity_at_point(self,radius,x,y,z):
-        # ax,ay,az=self.center_of_mass.get_gravity_at_point(radius,x,y,z) # here we should set radius automatically to the half mass radius (if it was plummer) - maybe diff for king?
-        ax,ay,az=self.gravity_from_cluster.get_gravity_at_point(radius,x,y,z)
+        if self.field_code_mode == 'center_of_mass':
+            ax,ay,az=self.center_of_mass.get_gravity_at_point(self.bound.particles.LagrangianRadii(mf=[0.5])[0][0].as_vector_with_length(len(x)),x,y,z) # here we should set radius automatically to the half mass radius (if it was plummer) - maybe diff for king?
+        elif self.field_code_mode == 'direct':
+            ax,ay,az=self.gravity_from_cluster.get_gravity_at_point(radius,x,y,z)
         return ax,ay,az
     
     # get the potential at a point
     def get_potential_at_point(self,radius,x,y,z):
-        # phi=self.center_of_mass.get_potential_at_point(radius,x,y,z)
-        phi = self.gravity_from_cluster.get_potential_at_point(radius,x,y,z)
+        if self.field_code_mode == 'center_of_mass':
+            phi=self.center_of_mass.get_potential_at_point(radius,x,y,z)
+        elif self.field_code_mode == 'direct':
+            phi = self.gravity_from_cluster.get_potential_at_point(radius,x,y,z)
         return phi
     
     # evolve the bound particles
     def evolve_model(self,tend):
-        self.bound.evolve_model(tend)
+        if self.stellar_evolution:
+            while self.bound.model_time < tend:
+                dt = min(self.stellar_evolution.particles.time_step.min(), tend-self.bound.model_time)
+                print('evolving stellar evolution to', dt.in_(units.Myr))
+                self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
+                self.channel_from_stellar_evolution.copy()
+                self.bound.evolve_model(self.bound.model_time+dt)
+                self.stellar_evolution.evolve_model(self.bound.model_time)
+                self.channel_from_stellar_evolution.copy()
+        else:
+            self.bound.evolve_model(tend)
+        print('the final time we evolved to was', self.bound.model_time.in_(units.Myr))
+        print('and for se', self.stellar_evolution.model_time.in_(units.Myr))
 
     def transfer_unbound_particles(self):
         bound = self.bound.particles.bound_subset(unit_converter=self.converter,tidal_radius=self.bound.particles.LagrangianRadii(mf=[0.95])[0][0], strict=True)
