@@ -96,13 +96,12 @@ class star_cluster(object):
         self.bound=code(self.converter, mode='openmp',number_of_workers=code_number_of_workers)
         self.unbound = drifter()
         
-        if bound_particles or unbound_particles:
+        if bound_particles:
             self.bound.particles.add_particles(bound_particles)
-            self.unbound.particles.add_particles(unbound_particles)
         else:
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scaling velocities accordingly
             self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
-
+        self.unbound.particles.add_particles(unbound_particles)
         if field_code_mode == 'center_of_mass':
             self.field_code_mode = 'center_of_mass'
             self.center_of_mass=center_of_mass(self.bound.particles)
@@ -126,7 +125,7 @@ class star_cluster(object):
             self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius'])
 
     def new_code_to_calculate_gravity(self): 
-            result = self.field_code(self.converter, number_of_workers=self.field_code_number_of_workers, mode='gpu')  # this can be GPU based at some point
+            result = self.field_code(self.converter, number_of_workers=self.field_code_number_of_workers, mode='cpu')  # this can be GPU based at some point
             return result
     # initialize the king model
     def initialize_king_model(self, n_particles, M_cluster, W0, r_tidal=None | units.pc, r_half=None | units.pc):

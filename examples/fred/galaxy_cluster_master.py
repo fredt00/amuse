@@ -118,7 +118,7 @@ def setup_galaxy_from_file(galaxy_file):
 # The main function that sets up the simulation and evolves it
 def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
           Rh=4.43 | units.kpc,diagnostic=20 | units.Myr, t_settle=1|units.Gyr,
-            Xinit=4.43 | units.kpc,V_fraction=1.0, eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None, beta=3,
+            Xinit=4.43 | units.kpc,V_fraction=1.0, eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None,cluster_file = None, beta=3,
             mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=None,r_tidal=None, M_cluster=None, r_nfw=None, rho_nfw=None):
     # check input options
     options = locals()
@@ -162,7 +162,7 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
         stream_old, restart_time = read_and_get_last_snapshot('unbound_'+restart_file)
         converter_petar = nbody_system.nbody_to_si(dt, cluster_old.total_mass())
         cluster = star_cluster(code=petar,code_converter=converter_petar, bound_particles=cluster_old, unbound_particles=stream_old,
-                                field_code=FastKick,field_code_number_of_workers=6,code_number_of_workers=3, field_code_mode='center_of_mass')
+                                field_code=FastKick,field_code_number_of_workers=10,code_number_of_workers=3, field_code_mode='direct')
         print('restarting from', restart_time, ' using file', restart_file)
         del(cluster_old)
         del(stream_old)
@@ -212,8 +212,13 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
             cluster = setup_test_particle(Rinit, Vinit, mstar)
             gravity_clu.particles.add_particles(cluster)
         else:
-            cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster,
-                                    M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=6,code_number_of_workers=2, field_code_mode='center_of_mass', stellar_evolution=SSE)
+            if cluster_file:
+                cluster_ic = setup_galaxy_from_file(cluster_file)
+                cluster = star_cluster(code=petar,code_converter=converter_petar, bound_particles=cluster_ic,
+                                field_code=FastKick,field_code_number_of_workers=6,code_number_of_workers=3, field_code_mode='center_of_mass',stellar_evolution=None)
+            else:
+                cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster,
+                                        M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=6,code_number_of_workers=3, field_code_mode='center_of_mass', stellar_evolution=None)
             cluster.particles.position += Rinit
             cluster.particles.velocity += Vinit
             io.write_set_to_file(cluster.unbound.particles,'unbound_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
@@ -352,6 +357,9 @@ def new_option_parser():
     result.add_option("-e", "--epsilon", unit=units.parsec,
                       dest="eps_gal_to_clu", type="float",default = 88.6 |units.pc,
                       help="softening length used for velocity kicks from galaxy to cluster  [%default]") 
+    result.add_option("--cluster_file",
+                      dest="cluster_file", default = None,
+                      help="A file to read in initial cluster condition [%default]")
 
     return result
 
