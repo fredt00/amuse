@@ -1,12 +1,12 @@
 from amuse.units import constants
 from amuse.datamodel import Particles, ParticlesSuperset
-from amuse.datamodel.particle_attributes import HopContainer, particle_potential
 from amuse.ic.kingmodel import new_physical_king_model
 from amuse.ic.brokenimf import new_masses
 from amuse.couple import bridge
-import numpy as np
 from amuse.units.quantities import zero
 from amuse.units import units
+import math
+from amuse.units import nbody_system
 class center_of_mass(object):
     """
     com=center_of_mass(grav_instance)
@@ -94,14 +94,14 @@ class star_cluster(object):
                   M_cluster=False, field_code=None,field_code_number_of_workers=1,code_number_of_workers=1, field_code_mode = 'direct', stellar_evolution = None):
         self.converter=code_converter
         self.bound=code(self.converter, mode='openmp',number_of_workers=code_number_of_workers)
-        self.unbound = drifter()
-        
+        self.unbound = drifter(stellar_evolution=stellar_evolution)
         if bound_particles:
             self.bound.particles.add_particles(bound_particles)
         else:
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scaling velocities accordingly
             self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
-        self.unbound.particles.add_particles(unbound_particles)
+        if unbound_particles:
+            self.unbound.particles.add_particles(unbound_particles)
         if field_code_mode == 'center_of_mass':
             self.field_code_mode = 'center_of_mass'
             self.center_of_mass=center_of_mass(self.bound.particles)
@@ -117,8 +117,11 @@ class star_cluster(object):
                 self.new_code_to_calculate_gravity,               
                 input_codes=[self.bound],                       
                 )
-            
+        
+        # evolve to 0 Myr so we have dt_soft set
+        self.bound.evolve_model(0 | units.Myr)
         # initialize stellar evolution
+        self.stellar_evolution=None
         if stellar_evolution:
             self.stellar_evolution = stellar_evolution()
             self.stellar_evolution.particles.add_particles(self.bound.particles)
@@ -153,24 +156,63 @@ class star_cluster(object):
     # evolve the bound particles
     def evolve_model(self,tend):
         if self.stellar_evolution:
-            while self.bound.model_time < tend:
-                dt = min(self.stellar_evolution.particles.time_step.min(), tend-self.bound.model_time)
-                print('evolving stellar evolution to', dt.in_(units.Myr))
+            adjusted_dt = False
+            minimum_value_of_dt_soft = self.bound.parameters.dt_soft
+            dt = 2.*self.stellar_evolution.particles.time_step.min()
+            while dt<(tend-self.bound.model_time):
+                dt_nbody = self.converter.to_nbody(dt).number
+                n_min_time_step = math.ceil(math.log(dt_nbody, 0.5))
+                dt = self.converter.to_si(0.5**n_min_time_step | nbody_system.time)
+
+                print('evolving to', (self.bound.model_time+dt).in_(units.Myr))
                 self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
                 self.channel_from_stellar_evolution.copy()
+
+                # may need to adjust dt_soft in petar to capture this!
+                if dt < self.bound.parameters.dt_soft:
+                    adjusted_dt = True
+                    self.bound.parameters.dt_soft=dt
+                    minimum_value_of_dt_soft = min(dt, minimum_value_of_dt_soft)
+                    print('adjusting dt_soft', dt.in_(units.Myr))
+                    print('actual value', self.bound.parameters.dt_soft.in_(units.Myr))
                 self.bound.evolve_model(self.bound.model_time+dt)
+                if adjusted_dt:
+                    self.bound.parameters.dt_soft=0 | units.Myr
+                    self.bound.evolve_model(self.bound.model_time)
+                    print('reset dt_soft to', self.bound.parameters.dt_soft.in_(units.Myr))
+                    adjusted_dt=False
+
                 self.stellar_evolution.evolve_model(self.bound.model_time)
                 self.channel_from_stellar_evolution.copy()
+                print(self.bound.model_time.in_(units.Myr))
+                dt = 2.*self.stellar_evolution.particles.time_step.min()
+            print('exited while loop')
+            self.bound.parameters.dt_soft=minimum_value_of_dt_soft
+            print(self.bound.parameters.dt_soft.in_(units.Myr))
+            self.stellar_evolution.evolve_model(self.bound.model_time+(tend-self.bound.model_time)/2)
+            self.channel_from_stellar_evolution.copy()
+            print('about to evolve petar')
+            self.bound.evolve_model(tend)
+            print('evolved petar')
+            self.stellar_evolution.evolve_model(tend)
+            self.channel_from_stellar_evolution.copy()
+            self.bound.parameters.dt_soft=0 | units.Myr
+            print('at end of evolve_model')
         else:
             self.bound.evolve_model(tend)
-        print('the final time we evolved to was', self.bound.model_time.in_(units.Myr))
-        print('and for se', self.stellar_evolution.model_time.in_(units.Myr))
 
     def transfer_unbound_particles(self):
         bound = self.bound.particles.bound_subset(unit_converter=self.converter,tidal_radius=self.bound.particles.LagrangianRadii(mf=[0.95])[0][0], strict=True)
-        new_unbound = self.bound.particles.difference(bound)
+        new_unbound = self.bound.particles.difference(bound).copy()
         self.unbound.particles.add_particles(new_unbound)
         self.bound.particles.remove_particles(new_unbound)
+        if self.stellar_evolution:
+            # redefine channel just in case?
+            new_unbound=self.stellar_evolution.particles.difference(bound).copy()
+            self.unbound.stellar_evolution.particles.add_particles(new_unbound) # here we want to add the equivalent SE particles (with age and other properties!), not the dynamical ones
+            self.unbound.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.unbound.particles, attributes=['mass', 'radius'])
+            self.stellar_evolution.particles.remove_particles(new_unbound) # will this remove the correct particles?
+            
     
     @property
     def all_particles(self):
@@ -189,14 +231,32 @@ class drifter(object):
     derived system, represents unbound star particles
     provides: particles, evolve_model
     """
-    def __init__(self, particles=Particles(), initial_time=zero):
+    def __init__(self, particles=Particles(), initial_time=zero, stellar_evolution=None):
         # initialize unbound particles here
         self.particles = particles
         self.model_time = initial_time
+        self.stellar_evolution=None
+        if stellar_evolution:
+            self.stellar_evolution = stellar_evolution()
+            if len(self.particles) > 0:
+                self.stellar_evolution.particles.add_particles(self.particles)
+                self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.particles, attributes=['mass', 'radius'])
         
     def evolve_model(self, tend):
         # evolve the unbound particles here
         if len(self.particles) > 0:
-            self.particles.position += self.particles.velocity *(tend-self.model_time)
-        self.model_time = tend
+            delta_t=tend-self.model_time
+            if self.stellar_evolution:
+                # since nothing else knows about the drifters we can just evolve a full step (as long as we don't have SN kicks)
+                while self.model_time < tend:
+                    dt = min(2.*self.stellar_evolution.particles.time_step.min(), tend-self.model_time)
+                    self.stellar_evolution.evolve_model(self.model_time+dt/2)
+                    self.channel_from_stellar_evolution.copy()
+                    self.particles.position += self.particles.velocity * dt
+                    self.stellar_evolution.evolve_model(self.model_time+dt)
+                    self.channel_from_stellar_evolution.copy()
+                    self.model_time +=dt
+            else:
+                self.particles.position += self.particles.velocity * delta_t
+                self.model_time = tend
         
