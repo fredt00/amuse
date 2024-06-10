@@ -75,7 +75,7 @@ def setup_galaxy(Nh=1e5, Mh=1e10 | units.MSun,Rscale=4.1 | units.kpc, t_settle=0
 
 def setup_analytic_halo(galaxy):
     galaxy.move_to_center()
-    galaxy = galaxy.select(lambda r : 100 | units.pc<r.length()<43 | units.kpc, ['position'])
+    galaxy = galaxy.select(lambda r : 100 | units.pc<r.length()<41 | units.kpc, ['position'])
     bin_centers, binned_density = bin_particles_density(galaxy.position.lengths().value_in(units.kpc),
                                                         galaxy.mass.value_in(units.MSun), 50)
     # Perform the fitting
@@ -119,7 +119,7 @@ def setup_galaxy_from_file(galaxy_file):
 def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=None, Mh=100|units.MSun,
           Rh=4.43 | units.kpc,diagnostic=20 | units.Myr, t_settle=1|units.Gyr,
             Xinit=4.43 | units.kpc,V_fraction=1.0, eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None,cluster_file = None, beta=3,
-            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=None,r_tidal=None, M_cluster=None, r_nfw=None, rho_nfw=None):
+            mstar= 1 |units.MSun, do_scale=False, df_model=False, analytic=False, r_half=None,r_tidal=None, M_cluster=None, r_nfw=None, rho_nfw=None, stellar_evolution=False):
     # check input options
     options = locals()
     print('your specified options are', options)
@@ -129,6 +129,8 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
     if df_model== 'True': df_model=True
     if analytic== 'False': analytic=False
     if analytic== 'True': analytic=True
+    if stellar_evolution== 'False': stellar_evolution=None
+    if stellar_evolution== 'True': stellar_evolution=SSE
     gadget_options = {'number_of_workers' : 27, 'epsilon_squared' : (88.6  | units.pc)**2, 'begin_time': 0.0 | units.Myr,
                        'max_size_timestep':2*dt,'time_max':dt*2.**14., 'time_limit_cpu': 0.1 | units.yr,
                        'timestep_accuracy_parameter':0.01, 'opening_angle':0.5}
@@ -162,7 +164,7 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
         stream_old, restart_time = read_and_get_last_snapshot('unbound_'+restart_file)
         converter_petar = nbody_system.nbody_to_si(dt, cluster_old.total_mass())
         cluster = star_cluster(code=petar,code_converter=converter_petar, bound_particles=cluster_old, unbound_particles=stream_old,
-                                field_code=FastKick,field_code_number_of_workers=10,code_number_of_workers=3, field_code_mode='direct')
+                                field_code=FastKick,field_code_number_of_workers=10,code_number_of_workers=3, field_code_mode='center_of_mass', stellar_evolution=stellar_evolution)
         print('restarting from', restart_time, ' using file', restart_file)
         del(cluster_old)
         del(stream_old)
@@ -215,10 +217,10 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
             if cluster_file:
                 cluster_ic = setup_galaxy_from_file(cluster_file)
                 cluster = star_cluster(code=petar,code_converter=converter_petar, bound_particles=cluster_ic,
-                                field_code=FastKick,field_code_number_of_workers=6,code_number_of_workers=3, field_code_mode='center_of_mass',stellar_evolution=None)
+                                field_code=FastKick,field_code_number_of_workers=6,code_number_of_workers=3, field_code_mode='center_of_mass',stellar_evolution=stellar_evolution)
             else:
                 cluster = star_cluster(code=petar,code_converter=converter_petar, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster,
-                                        M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=6,code_number_of_workers=3, field_code_mode='center_of_mass', stellar_evolution=None)
+                                        M_cluster=M_cluster, field_code=FastKick,field_code_number_of_workers=6,code_number_of_workers=3, field_code_mode='center_of_mass', stellar_evolution=stellar_evolution)
             cluster.particles.position += Rinit
             cluster.particles.velocity += Vinit
             io.write_set_to_file(cluster.unbound.particles,'unbound_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
@@ -232,7 +234,7 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
         gravity_gal.parameters.epsilon_squared=converter_gal.to_nbody(gadget_options['epsilon_squared'])
         gravity_gal.parameters.use_hydro_flag=False
         gravity_gal.particles.add_particles(galaxy)
-        # set up gravity calculator for kicking cluster
+        # set up direct sum gravity calculator for kicking cluster
         def new_galaxy_code_to_calculate_gravity():
             result = FastKick(converter_gal, number_of_workers=6)
             return result
@@ -250,17 +252,17 @@ def main(N_halo=10000, N_cluster=None, W0=5.0, t_end=10|units.Myr,restart_file=N
         integrator.add_system(cluster,(df_model,halo_model,), do_sync=True)
         integrator.add_system(cluster.unbound,(halo_model,cluster,), do_sync=True)
     elif df_model:
-        system=bridge.GravityCodeInField(cluster, (gravity_from_galaxy,df_model,), do_sync=True, verbose=True,
+        system=bridge.GravityCodeInField(cluster, (gravity_gal,df_model,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
-        unbound_system=bridge.GravityCodeInField(cluster.unbound, (gravity_from_galaxy,cluster,), do_sync=True, verbose=True,
+        unbound_system=bridge.GravityCodeInField(cluster.unbound, (gravity_gal,cluster,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
         integrator.add_code(system)
         integrator.add_code(unbound_system)
         integrator.add_code(gravity_gal)
     else:
-        system=bridge.GravityCodeInField(cluster, (gravity_from_galaxy,), do_sync=True, verbose=True,
+        system=bridge.GravityCodeInField(cluster, (gravity_gal,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
-        unbound_system=bridge.GravityCodeInField(cluster.unbound, (gravity_from_galaxy,cluster,), do_sync=True, verbose=True,
+        unbound_system=bridge.GravityCodeInField(cluster.unbound, (gravity_gal,cluster,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
         integrator.add_code(system)
         integrator.add_code(unbound_system)
@@ -308,6 +310,9 @@ def new_option_parser():
     result.add_option("--analytic", 
                       type='choice', choices=('True', 'False'), dest='analytic', default='False',
                       help="use analytic model halo and dynamical friction? [%default]")
+    result.add_option("--stellar_evolution", 
+                      type='choice', choices=('True', 'False'), dest='stellar_evolution', default='False',
+                      help="use stellar evolution in the cluster? [%default]")
     
     ###### GALAXY OPTIONS
     result.add_option("-N", "--Nhalo", dest="N_halo", type="int",default = 1e6,

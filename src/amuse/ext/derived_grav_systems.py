@@ -133,7 +133,7 @@ class star_cluster(object):
     # initialize the king model
     def initialize_king_model(self, n_particles, M_cluster, W0, r_tidal=None | units.pc, r_half=None | units.pc):
         # we either fix the number of stars, or the total mass (down to stochastic fluctuations)
-        m_stars = new_masses(stellar_mass=M_cluster,number_of_stars=n_particles, upper_mass_limit=100.0 | units.MSun,lower_mass_limit=0.1 | units.MSun)
+        m_stars = new_masses(stellar_mass=M_cluster,number_of_stars=n_particles, upper_mass_limit=15.0 | units.MSun,lower_mass_limit=0.1 | units.MSun)
         cluster = new_physical_king_model(W0, masses=m_stars, tidal_radius=r_tidal, half_mass_radius=r_half)
         self.bound.particles.add_particles(cluster)
 
@@ -212,6 +212,7 @@ class star_cluster(object):
             self.unbound.stellar_evolution.particles.add_particles(new_unbound) # here we want to add the equivalent SE particles (with age and other properties!), not the dynamical ones
             self.unbound.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.unbound.particles, attributes=['mass', 'radius'])
             self.stellar_evolution.particles.remove_particles(new_unbound) # will this remove the correct particles?
+            self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius'])
             
     
     @property
