@@ -120,6 +120,7 @@ class star_cluster(object):
         
         # evolve to 0 Myr so we have dt_soft set
         self.bound.evolve_model(0 | units.Myr)
+  
         # initialize stellar evolution
         self.stellar_evolution=None
         if stellar_evolution:
@@ -156,48 +157,67 @@ class star_cluster(object):
     # evolve the bound particles
     def evolve_model(self,tend):
         if self.stellar_evolution:
-            adjusted_dt = False
-            minimum_value_of_dt_soft = self.bound.parameters.dt_soft
-            dt = 2.*self.stellar_evolution.particles.time_step.min()
+            # here we need to stay in int (the exponent of 0.5) until calls to dynamics and SE to avoid floating point errors
+            # also it seems petar can't handle dt_soft below a certain value for a given system - perhaps when we approach similar timesteps
+            # to the hermite scheme or binary periods? or it could just be rounding errors from all the conversions going on
+            # either way we will set the minimum timestep to 0.5**15 for now (this does depend on the converter used though)
+            maximum_n_allowed = 17
+            initial_n_for_dt_soft = math.ceil(math.log(self.converter.to_nbody(self.bound.parameters.dt_soft).number, 0.5))
+            maximum_n_for_dt_soft = initial_n_for_dt_soft
+            dt = self.stellar_evolution.particles.time_step.min()
             while dt<(tend-self.bound.model_time):
-                dt_nbody = self.converter.to_nbody(dt).number
-                n_min_time_step = math.ceil(math.log(dt_nbody, 0.5))
-                dt = self.converter.to_si(0.5**n_min_time_step | nbody_system.time)
-
-                print('evolving to', (self.bound.model_time+dt).in_(units.Myr))
+                dt_se_nbody = self.converter.to_nbody(dt).number
+                n_min_se_time_step = math.ceil(math.log(dt_se_nbody, 0.5))
+                if n_min_se_time_step > maximum_n_allowed:
+                    n_min_se_time_step = maximum_n_allowed
+                dt = self.converter.to_si(0.5**n_min_se_time_step | nbody_system.time)
                 self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
                 self.channel_from_stellar_evolution.copy()
 
-                # may need to adjust dt_soft in petar to capture this!
-                if dt < self.bound.parameters.dt_soft:
-                    adjusted_dt = True
-                    self.bound.parameters.dt_soft=dt
-                    minimum_value_of_dt_soft = min(dt, minimum_value_of_dt_soft)
-                    print('adjusting dt_soft', dt.in_(units.Myr))
-                    print('actual value', self.bound.parameters.dt_soft.in_(units.Myr))
-                self.bound.evolve_model(self.bound.model_time+dt)
-                if adjusted_dt:
-                    self.bound.parameters.dt_soft=0 | units.Myr
-                    self.bound.evolve_model(self.bound.model_time)
-                    print('reset dt_soft to', self.bound.parameters.dt_soft.in_(units.Myr))
-                    adjusted_dt=False
+                # may need to adjust dt_soft in petar to capture this timescale - stay in integer exponent!
+                if n_min_se_time_step > initial_n_for_dt_soft:
+                    self.bound.parameters.dt_soft=dt # petar can take nbody or SI units
+                    maximum_n_for_dt_soft = max(n_min_se_time_step, maximum_n_for_dt_soft)
+                    current_n_for_dt_soft = n_min_se_time_step
+                else:
+                    self.bound.parameters.dt_soft=0.5**initial_n_for_dt_soft | nbody_system.time
 
+                self.bound.evolve_model(self.bound.model_time+dt)
+                
                 self.stellar_evolution.evolve_model(self.bound.model_time)
                 self.channel_from_stellar_evolution.copy()
-                print(self.bound.model_time.in_(units.Myr))
-                dt = 2.*self.stellar_evolution.particles.time_step.min()
-            print('exited while loop')
-            self.bound.parameters.dt_soft=minimum_value_of_dt_soft
-            print(self.bound.parameters.dt_soft.in_(units.Myr))
-            self.stellar_evolution.evolve_model(self.bound.model_time+(tend-self.bound.model_time)/2)
+                dt = self.stellar_evolution.particles.time_step.min()
+
+            remaining_time = tend-self.bound.model_time
+            self.stellar_evolution.evolve_model(self.bound.model_time+remaining_time/2)
             self.channel_from_stellar_evolution.copy()
-            print('about to evolve petar')
+            # print(initial_n_for_dt_soft, maximum_n_for_dt_soft)
+            # while remaining_time>0 | units.Myr:
+            #     # Calculate n as the ceil of the base-0.5 logarithm of the remaining time in n-body units
+            #     n = math.ceil(math.log(self.converter.to_nbody(remaining_time).number, 0.5))
+            #     # if required timestep is too small for dt_soft
+            #     if n <= initial_n_for_dt_soft:
+            #         print('good for big step')
+            #         dt_soft = 0.5**initial_n_for_dt_soft | nbody_system.time
+            #     else:
+            #         print('step too small')
+            #         dt_soft = 0.5**n | nbody_system.time
+
+
+            #     self.bound.parameters.dt_soft = dt_soft
+            #     print('dt_soft became', self.bound.parameters.dt_soft.in_(units.Myr))
+            #     # Evolve the model by dt_soft
+            #     self.bound.evolve_model(self.bound.model_time + self.converter.to_si(0.5**n | nbody_system.time))
+
+            #     # Update the remaining time
+            #     remaining_time = tend - self.bound.model_time
+            #     print('remaining time', remaining_time.in_(units.Myr))
+            self.bound.parameters.dt_soft = self.converter.to_si(0.5**maximum_n_for_dt_soft | nbody_system.time)
             self.bound.evolve_model(tend)
-            print('evolved petar')
+            self.bound.parameters.dt_soft=0 | units.Myr
+            self.bound.evolve_model(self.bound.model_time)
             self.stellar_evolution.evolve_model(tend)
             self.channel_from_stellar_evolution.copy()
-            self.bound.parameters.dt_soft=0 | units.Myr
-            print('at end of evolve_model')
         else:
             self.bound.evolve_model(tend)
 
@@ -210,10 +230,8 @@ class star_cluster(object):
             # redefine channel just in case?
             new_unbound=self.stellar_evolution.particles.difference(bound).copy()
             self.unbound.stellar_evolution.particles.add_particles(new_unbound) # here we want to add the equivalent SE particles (with age and other properties!), not the dynamical ones
-            self.unbound.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.unbound.particles, attributes=['mass', 'radius'])
             self.stellar_evolution.particles.remove_particles(new_unbound) # will this remove the correct particles?
             self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius'])
-            
     
     @property
     def all_particles(self):
@@ -241,22 +259,23 @@ class drifter(object):
             self.stellar_evolution = stellar_evolution()
             if len(self.particles) > 0:
                 self.stellar_evolution.particles.add_particles(self.particles)
-                self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.particles, attributes=['mass', 'radius'])
         
     def evolve_model(self, tend):
         # evolve the unbound particles here
         if len(self.particles) > 0:
             delta_t=tend-self.model_time
             if self.stellar_evolution:
+                # seems like we have to keep redefining this...
+                self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.particles, attributes=['mass', 'radius'])
                 # since nothing else knows about the drifters we can just evolve a full step (as long as we don't have SN kicks)
-                while self.model_time < tend:
-                    dt = min(2.*self.stellar_evolution.particles.time_step.min(), tend-self.model_time)
-                    self.stellar_evolution.evolve_model(self.model_time+dt/2)
-                    self.channel_from_stellar_evolution.copy()
-                    self.particles.position += self.particles.velocity * dt
-                    self.stellar_evolution.evolve_model(self.model_time+dt)
-                    self.channel_from_stellar_evolution.copy()
-                    self.model_time +=dt
+                # while self.model_time < tend:
+                    # dt = min(2.*self.stellar_evolution.particles.time_step.min(), tend-self.model_time)
+                self.stellar_evolution.evolve_model(self.model_time+delta_t/2)
+                self.channel_from_stellar_evolution.copy()
+                self.particles.position += self.particles.velocity * delta_t
+                self.stellar_evolution.evolve_model(self.model_time+delta_t)
+                self.channel_from_stellar_evolution.copy()
+                self.model_time = tend
             else:
                 self.particles.position += self.particles.velocity * delta_t
                 self.model_time = tend
