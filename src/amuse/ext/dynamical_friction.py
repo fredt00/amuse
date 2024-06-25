@@ -99,6 +99,25 @@ class NFW_profile(LiteratureReferencesMixIn):
         az = fr*z/r
         return ax,ay,az
     
+    def get_tidalfield_at_point(self,eps,x,y,z):
+        r = (x**2+y**2+z**2).sqrt()
+        xnorm = x/r
+        ynorm = y/r
+        znorm = z/r
+        fr = self.radial_force(r)
+        rhor = self.mass_density(r)
+        print(fr)
+        print(rhor)
+        Txx = (xnorm**2 + 2*xnorm -1)*fr/r - self.G*4 * np.pi *rhor * xnorm
+        Tyy = (ynorm**2 + 2*ynorm -1)*fr/r - self.G*4 * np.pi *rhor * ynorm
+        Tzz = (znorm**2 + 2*znorm -1)*fr/r - self.G*4 * np.pi *rhor * znorm
+        Txy = xnorm*ynorm * (self.G*4 * np.pi *rhor + 3*fr/r)
+        Txz = xnorm*znorm * (self.G*4 * np.pi *rhor + 3*fr/r)
+        Tyz = ynorm*znorm * (self.G*4 * np.pi *rhor + 3*fr/r)
+
+        print(Txx, Tyy)
+        return Txx, Tyy, Tzz, Txy, Txz, Tyz
+    
     def enclosed_mass(self,r):
         fr = self.radial_force(r)
         return -r**2/self.G*fr
@@ -110,3 +129,4 @@ class NFW_profile(LiteratureReferencesMixIn):
     def mass_density(self,r):
         r_rs = r/self.rs
         return self.rho0 / (r_rs*(1.+r_rs)**2)
+    

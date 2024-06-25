@@ -7,6 +7,7 @@ from amuse.units.quantities import zero
 from amuse.units import units
 import math
 from amuse.units import nbody_system
+import numpy as np
 class center_of_mass(object):
     """
     com=center_of_mass(grav_instance)
@@ -165,6 +166,7 @@ class star_cluster(object):
             initial_n_for_dt_soft = math.ceil(math.log(self.converter.to_nbody(self.bound.parameters.dt_soft).number, 0.5))
             maximum_n_for_dt_soft = initial_n_for_dt_soft
             dt = self.stellar_evolution.particles.time_step.min()
+            # change this to evolve stellar evolution until mass has changed by 1-10% or we reach the bridge time step
             while dt<(tend-self.bound.model_time):
                 dt_se_nbody = self.converter.to_nbody(dt).number
                 n_min_se_time_step = math.ceil(math.log(dt_se_nbody, 0.5))
@@ -279,4 +281,43 @@ class drifter(object):
             else:
                 self.particles.position += self.particles.velocity * delta_t
                 self.model_time = tend
-        
+
+
+class star_cluster_particle(object):
+    def __init__(self, mass, position, velocity, get_tidalfield_at_point):
+        self.mass = mass
+        self.position = position
+        self.velocity = velocity
+        # galaxy object must have get_tidalfield_at_point method
+        # self.tidal_field = tidalfield_getter
+        self.get_tidalfield_at_point = get_tidalfield_at_point
+    def evolve_model(self, dt):
+        # Calculate the change in mass based on the tidal tensor
+        # probably do the mass loss as leapfrog
+        scale_mass = 2.e5 | units.MSun
+        self.position+=self.velocity*dt
+        Txx, Tyy, Tzz, Txy, Txz, Tyz = self.get_tidalfield_at_point(0 | units.pc, self.position.x, self.position.y, self.position.z)
+        Txx = Txx.value_in(units.Myr**-2)
+        Tyy = Tyy.value_in(units.Myr**-2)
+        Tzz = Tzz.value_in(units.Myr**-2)
+        Txy = Txy.value_in(units.Myr**-2)
+        Txz = Txz.value_in(units.Myr**-2)
+        Tyz = Tyz.value_in(units.Myr**-2)
+
+    
+       
+        # Construct the tidal tensor
+        tidal_tensor = np.array([[Txx, Txy, Txz],
+                                 [Txy, Tyy, Tyz],
+                                 [Txz, Tyz, Tzz]])
+        print(tidal_tensor)
+
+        # tidal_tensor is a 3x3 matrix, write code that computes the maximum eigenvalue
+        eigenvalues, _ = np.linalg.eig(tidal_tensor)
+        max_eigenvalue = np.max(np.abs(eigenvalues)) | units.Myr**-2
+        print(max_eigenvalue)
+        omega_tid = np.sqrt(max_eigenvalue/3.)
+        t_tidal = (10 | units.Gyr) * (self.mass/scale_mass)**(2./3.) / (omega_tid * (100 | units.Gyr))
+
+        self.mass -= dt * self.mass / t_tidal
+       
