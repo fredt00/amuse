@@ -106,16 +106,21 @@ class NFW_profile(LiteratureReferencesMixIn):
         znorm = z/r
         fr = self.radial_force(r)
         rhor = self.mass_density(r)
-        print(fr)
-        print(rhor)
-        Txx = (xnorm**2 + 2*xnorm -1)*fr/r - self.G*4 * np.pi *rhor * xnorm
-        Tyy = (ynorm**2 + 2*ynorm -1)*fr/r - self.G*4 * np.pi *rhor * ynorm
-        Tzz = (znorm**2 + 2*znorm -1)*fr/r - self.G*4 * np.pi *rhor * znorm
-        Txy = xnorm*ynorm * (self.G*4 * np.pi *rhor + 3*fr/r)
-        Txz = xnorm*znorm * (self.G*4 * np.pi *rhor + 3*fr/r)
-        Tyz = ynorm*znorm * (self.G*4 * np.pi *rhor + 3*fr/r)
+        d = 4 | units.pc
+        # Txx = -(xnorm**2 + 2*xnorm -1)*fr/r + self.G*4 * np.pi *rhor * xnorm
+        # Tyy = -(ynorm**2 + 2*ynorm -1)*fr/r + self.G*4 * np.pi *rhor * ynorm
+        # Tzz = -(znorm**2 + 2*znorm -1)*fr/r + self.G*4 * np.pi *rhor * znorm
+        # Txy = -xnorm*ynorm * (self.G*4 * np.pi *rhor + 3*fr/r)
+        # Txz = -xnorm*znorm * (self.G*4 * np.pi *rhor + 3*fr/r)
+        # Tyz = -ynorm*znorm * (self.G*4 * np.pi *rhor + 3*fr/r)
 
-        print(Txx, Tyy)
+        Txx = -1/d**2 * (self.get_potential_at_point(eps,x+d,y,z) + self.get_potential_at_point(eps,x-d,y,z) - 2*self.get_potential_at_point(eps,x,y,z))
+        Tyy = -1/d**2 * (self.get_potential_at_point(eps,x,y+d,z) + self.get_potential_at_point(eps,x,y-d,z) - 2*self.get_potential_at_point(eps,x,y,z))
+        Tzz = -1/d**2 * (self.get_potential_at_point(eps,x,y,z+d) + self.get_potential_at_point(eps,x,y,z-d) - 2*self.get_potential_at_point(eps,x,y,z))
+        Txy = -1/(4*d**2) * (self.get_potential_at_point(eps,x+d,y+d,z) + self.get_potential_at_point(eps,x-d,y-d,z) - self.get_potential_at_point(eps,x+d,y-d,z) - self.get_potential_at_point(eps,x-d,y+d,z))
+        Txz = -1/(4*d**2) * (self.get_potential_at_point(eps,x+d,y,z+d) + self.get_potential_at_point(eps,x-d,y,z-d) - self.get_potential_at_point(eps,x+d,y,z-d) - self.get_potential_at_point(eps,x-d,y,z+d))
+        Tyz = -1/(4*d**2) * (self.get_potential_at_point(eps,x,y+d,z+d) + self.get_potential_at_point(eps,x,y-d,z-d) - self.get_potential_at_point(eps,x,y+d,z-d) - self.get_potential_at_point(eps,x,y-d,z+d))
+
         return Txx, Tyy, Tzz, Txy, Txz, Tyz
     
     def enclosed_mass(self,r):

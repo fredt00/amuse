@@ -148,6 +148,33 @@ class MultiplePartIMF(object):
                 )
             result += self.fraction_per_bin[i] * mean_of_bin
         return result
+    
+    # used for computing psi - the scaling of the half mass radius due to IMF spread - in our subgrid model
+    def mass2p5_mean(self):
+        result = 0 | units.MSun**(2.5)
+        for i in range(self.number_of_bins):
+            a1 = self.alphas[i] + 1
+            a3p5 = self.alphas[i] + 3.5
+            m_low = self.mass_boundaries[i]
+            m_high = self.mass_boundaries[i+1]
+
+            if abs(a1) < 1.0e-10:
+                mean_of_bin = (
+                    (m_high**a3p5 - m_low**a3p5)
+                    / (a3p5 * numpy.log(m_high/m_low))
+                )
+            elif abs(a3p5) < 1.0e-10:
+                mean_of_bin = (
+                    (a1 / (m_high**a1 - m_low**a1))
+                    * numpy.log(m_high/m_low)
+                )
+            else:
+                mean_of_bin = (
+                    (a1 / (m_high**a1 - m_low**a1))
+                    * ((m_high**a3p5 - m_low**a3p5) / a3p5)
+                )
+            result += self.fraction_per_bin[i] * mean_of_bin
+        return result
 
     def mass(self, random_numbers):
         indices = numpy.searchsorted(
