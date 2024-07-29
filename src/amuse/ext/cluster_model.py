@@ -8,6 +8,7 @@ from amuse.datamodel import Particles
 from amuse.units import units
 import numpy as np
 from scipy.integrate import simpson
+from amuse.ext.derived_grav_systems import tidal_field
 
 global xi0
 xi0 = 0.0075 #0.0142 for equal mass, 0.0075 for the paper
@@ -38,8 +39,8 @@ nc =12.5 # 12.5 in paper ... maybe lowerfor us? 5?
 global tidal_shock_energy_fraction
 tidal_shock_energy_fraction =0.25 # - could be more physically motivated? written in terms of other parameters?
  
-class internal_dynamics(object):
-    def __init__(self,N,mbar, rhalf, kappa, M_seg):
+class internal_dynamics(tidal_field):
+    def __init__(self,N,mbar, rhalf, kappa, M_seg, grav_instance):
         self.N=N
         self.mbar=mbar
         self.rhalf=rhalf
@@ -53,7 +54,9 @@ class internal_dynamics(object):
         self.rtidal = 0 | units.pc
         self.n_trh = 0
         self.n_trhp = 0
-    
+
+        super().__init__(grav_instance)
+
     # derived quantities
     def relaxation_time(self):
         return 0.138 * np.sqrt(self.N) * self.rhalf**1.5 / ((constants.G * self.mbar).sqrt() * np.log(gamma_c * self.N))
@@ -142,7 +145,7 @@ class internal_dynamics(object):
         return self.relaxation_time_prime()/1e6
 
 class star_cluster_particle(internal_dynamics):
-    def __init__(self, mass, half_mass_radius, position, velocity, external_get_gravity_at_point=None):
+    def __init__(self, mass, half_mass_radius, position, velocity, grav_instance=None):
         # set initial conditions
         self.particles = Particles(1)
         self.particles.mass = mass
@@ -151,22 +154,11 @@ class star_cluster_particle(internal_dynamics):
         self.model_time = 0 | units.Myr
 
         # set up tidal shock tracking
-        self.tt_last_max = [0,0,0,0,0,0] 
         self.last_max_evalues = [0,0,0]
         self.time_of_last_shock = [0,0,0]| units.Myr
-        self.time_of_last_shock_tt = [0,0,0,0,0,0]| units.Myr
-        self.tidal_tensor_time = np.empty((0,6))
         self.eigenvalues = np.empty((0,3))
-        self.shock_times = [] | units.Myr
-        self.shock_times_types = []
 
-
-        super().__init__(N=18015, mbar=0.555131467864 | units.MSun, rhalf=half_mass_radius, kappa=0.2, M_seg=3)
-
-        
-        self.dm_shock= 0 | units.MSun
- 
-        self.external_get_gravity_at_point = external_get_gravity_at_point
+        super().__init__(N=18015, mbar=0.555131467864 | units.MSun, rhalf=half_mass_radius, kappa=0.2, M_seg=3, grav_instance=grav_instance)
 
     def evolve_model(self, tend):
         dt = tend - self.model_time
@@ -182,7 +174,9 @@ class star_cluster_particle(internal_dynamics):
 
     def internal_evolution(self, tend):
         # think about the order here!
-        # tidal evolution - computes shock mass loss and change of rh, returns current rtidal
+        # tidal evolution - computes shock mass loss and change of rh
+        # set tidal radius
+        self.rtidal = self.tidal_radius(4 | units.pc,self.particles.position[0].x, self.particles.position[0].y, self.particles.position[0].z, self.particles.mass[0])
         self.tidal_evolution(tend)
     
         # relaxation evolution 
@@ -196,21 +190,8 @@ class star_cluster_particle(internal_dynamics):
         # here we do the same rk steps for all quantities, then check error with N as this is most important
         # tidal tensor mass loss as position is not updated in this timestep - make this a funtion
         # Construct the tidal tensor
-        Txx, Tyy, Tzz, Txy, Txz, Tyz = self.get_tidalfield_at_point_per_gyr_sq(4 | units.pc, self.particles.position.x[0], self.particles.position.y[0], self.particles.position.z[0])
-        tidal_tensor = np.array([[Txx, Txy, Txz],
-                                [Txy, Tyy, Tyz],
-                                [Txz, Tyz, Tzz]])
-        self.tidal_tensor_time=np.append(self.tidal_tensor_time,np.array([[Txx, Tyy, Tzz, Txy, Txz, Tyz]]),axis=0)
-
-        # tidal_tensor is a 3x3 matrix, write code that computes the maximum eigenvalue
-        eigenvalues, _ = np.linalg.eig(tidal_tensor)
+        eigenvalues = self.tidal_tensor_eigenvalues(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y, self.particles.position[0].z)
         self.eigenvalues = np.append(self.eigenvalues, np.array([eigenvalues]), axis=0)
-        max_eigenvalue = np.max(np.abs(eigenvalues))| units.gyr**-2
-        omegasq = (np.abs(eigenvalues.sum())/3) | units.gyr**-2
-        T = max_eigenvalue + omegasq
-        self.rtidal = (constants.G * self.N*self.mbar/T)**(1/3)
-        print(self.rtidal.in_(units.pc))
-        self.dm_shock = 0 | units.MSun
         index=0
         for lam in eigenvalues:
             if np.abs(lam) < 0.88*self.last_max_evalues[index] and np.gradient(np.abs(self.eigenvalues[:,index]))[-1] >= 0:
@@ -269,21 +250,6 @@ class star_cluster_particle(internal_dynamics):
             self.psi = psi_5
             internal_time += dt
         print(internal_time.in_(units.Myr))
-    def get_tidalfield_at_point_per_gyr_sq(self,scale, x, y, z):
-        # perhaps this could vary, = self.rhalf
-        h = scale
-        ax0,ay0,az0 = self.external_get_gravity_at_point(0 | units.pc, x, y, z)
-        axx,ayx,azx = self.external_get_gravity_at_point(0 | units.pc, x+h, y, z)
-        axy,ayy,azy = self.external_get_gravity_at_point(0 | units.pc, x, y+h, z)
-        axz,ayz,azz = self.external_get_gravity_at_point(0 | units.pc, x, y, z+h)
-        Txx = ((axx-ax0)/h).value_in(units.gyr**-2)
-        Tyy = ((ayy-ay0)/h).value_in(units.gyr**-2)
-        Tzz = ((azz-az0)/h).value_in(units.gyr**-2)
-        Txy = ((axy-ax0)/h).value_in(units.gyr**-2)
-        Txz = ((axz-ax0)/h).value_in(units.gyr**-2)
-        Tyz = ((ayz-ay0)/h).value_in(units.gyr**-2)
-
-        return Txx, Tyy, Tzz, Txy, Txz, Tyz
     
     def get_gravity_at_point(self,radius,x,y,z):
         mass=self.particles.mass[0]
@@ -308,6 +274,4 @@ class star_cluster_particle(internal_dynamics):
         yn4 = y + ((37/378)*k1)+((250/621)*k3)+((125/594)*k4)+((512/1771)*k6)
         yn5 = y + ((2825/27648)*k1)+((18575/48384)*k3)+((13525/55296)*k4)+((277/14336)*k5)+((1/4)*k6)
         err = np.abs((yn4-yn5)/yn4)
-
-        truncation_error = np.abs((k1/150. - 3./100.*k3 + 16./75.*k4 + 1./20.*k5 + 6./25.*k6)/yn5)
         return yn4, err

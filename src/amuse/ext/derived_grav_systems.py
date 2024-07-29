@@ -94,46 +94,66 @@ class star_cluster(object):
     base_class
     """
     def __init__(self,code,code_converter,bound_particles=None ,unbound_particles=None,W0=5, r_tidal=None | units.pc,r_half=None | units.pc, n_particles=None,
-                  M_cluster=False, field_code=None,field_code_number_of_workers=1,code_number_of_workers=1, field_code_mode = 'direct', stellar_evolution = None):
+                  M_cluster=False, code_number_of_workers=1, stellar_evolution = None, external_get_gravity_at_point=None):
+        # initialize converter from SI to Nbody units
         self.converter=code_converter
+        # initialize the code for handling bound cluster particles (collisional)
         self.bound=code(self.converter, mode='openmp',number_of_workers=code_number_of_workers)
+
+        # initialize the code for handling unbound particles (collisionless)
         self.unbound = drifter(stellar_evolution=stellar_evolution)
+
+        # if restarting, add the particles to respective codes
         if bound_particles:
             self.bound.particles.add_particles(bound_particles)
+        if unbound_particles:
+            self.unbound.particles.add_particles(unbound_particles)
+
         else:
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scaling velocities accordingly
             self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
-        if unbound_particles:
-            self.unbound.particles.add_particles(unbound_particles)
-        if field_code_mode == 'center_of_mass':
-            self.field_code_mode = 'center_of_mass'
-            self.center_of_mass=center_of_mass(self.bound.particles)
-        else:
-            self.field_code_mode = 'direct'
-            if field_code_mode!='direct':
-                print('ERROR: you must choose either direct or center_of_mass for field_code_mode. Defaulting to direct.')
-            
-            self.field_code=field_code
-            self.field_code_number_of_workers=field_code_number_of_workers
-            # initialize the code for get_gravity_at_point and get_potential_at_point
-            self.gravity_from_cluster = bridge.CalculateFieldForCodes(
-                self.new_code_to_calculate_gravity,               
-                input_codes=[self.bound],                       
-                )
         
+        self.center_of_mass=center_of_mass(self.bound.particles)
+  
         # evolve to 0 Myr so we have dt_soft set
         self.bound.evolve_model(0 | units.Myr)
   
-        # initialize stellar evolution
+        # initialize the framework particles that we will copy data to and from - this should remain constant in length
+        # no particles are added or removed to this set
+        self.particles = Particles()
+        self.particles.add_particles(self.bound.particles)
+        self.particles.add_particles(self.unbound.particles)
+        
+        # NOTE the below channels may need updating following particle transfers
+
+        # initialize channels for copying data to the framework
+        self.b2f = self.bound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
+        self.u2f = self.unbound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
+
+        # channels for copying dynamical quantities altered by SE from framework to dynamics codes
+        # also must copy pos vel in case of bridge kicking
+        self.f2b = self.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
+        self.f2u = self.particles.new_channel_to(self.unbound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
+
+         # initialize stellar evolution
         self.stellar_evolution=None
         if stellar_evolution:
             self.stellar_evolution = stellar_evolution()
             self.stellar_evolution.particles.add_particles(self.bound.particles)
-            self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius'])
+            # note - it is important that all required restart attributes are copied to the framework particles from SE
+            self.s2f = self.stellar_evolution.particles.new_channel_to(self.particles)#, attributes=['mass', 'radius'])
+            self.s2f.copy()
+        # define a particle attribute to keeping track of escaping stars
+        self.particles.escape_flag = False
+        self.particles.unbound_flag = False
+
+        # for computing the tidal radius
+        self.external_get_gravity_at_point = external_get_gravity_at_point
 
     def new_code_to_calculate_gravity(self): 
-            result = self.field_code(self.converter, number_of_workers=self.field_code_number_of_workers, mode='cpu')  # this can be GPU based at some point
-            return result
+        result = self.field_code(self.converter, number_of_workers=self.field_code_number_of_workers, mode='cpu')  # this can be GPU based at some point
+        return result
+    
     # initialize the king model
     def initialize_king_model(self, n_particles, M_cluster, W0, r_tidal=None | units.pc, r_half=None | units.pc):
         # we either fix the number of stars, or the total mass (down to stochastic fluctuations)
@@ -141,21 +161,17 @@ class star_cluster(object):
         cluster = new_physical_king_model(W0, masses=m_stars, tidal_radius=r_tidal, half_mass_radius=r_half)
         self.bound.particles.add_particles(cluster)
 
+    def half_mass_radius(self):
+        return self.bound.particles.LagrangianRadii(mf=[0.5])[0][0]
+    
     # get the gravity at a point
     def get_gravity_at_point(self,radius,x,y,z):
-        if self.field_code_mode == 'center_of_mass':
-            ax,ay,az=self.center_of_mass.get_gravity_at_point(self.bound.particles.LagrangianRadii(mf=[0.5])[0][0].as_vector_with_length(len(x)),x,y,z) # here we should set radius automatically to the half mass radius (if it was plummer) - maybe diff for king?
-        elif self.field_code_mode == 'direct':
-            ax,ay,az=self.gravity_from_cluster.get_gravity_at_point(radius,x,y,z)
+        ax,ay,az=self.center_of_mass.get_gravity_at_point(self.half_mass_radius().as_vector_with_length(len(x)),x,y,z) 
         return ax,ay,az
     
     # get the potential at a point
     def get_potential_at_point(self,radius,x,y,z):
-        if self.field_code_mode == 'center_of_mass':
-            phi=self.center_of_mass.get_potential_at_point(radius,x,y,z)
-        elif self.field_code_mode == 'direct':
-            phi = self.gravity_from_cluster.get_potential_at_point(radius,x,y,z)
-        return phi
+        return self.center_of_mass.get_potential_at_point(radius,x,y,z)
     
     # evolve the bound particles
     def evolve_model(self,tend):
@@ -176,7 +192,9 @@ class star_cluster(object):
                     n_min_se_time_step = maximum_n_allowed
                 dt = self.converter.to_si(0.5**n_min_se_time_step | nbody_system.time)
                 self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
-                self.channel_from_stellar_evolution.copy()
+                self.s2f.copy()
+                self.f2b.copy()
+                self.f2u.copy()
 
                 # may need to adjust dt_soft in petar to capture this timescale - stay in integer exponent!
                 if n_min_se_time_step > initial_n_for_dt_soft:
@@ -189,63 +207,75 @@ class star_cluster(object):
                 self.bound.evolve_model(self.bound.model_time+dt)
                 
                 self.stellar_evolution.evolve_model(self.bound.model_time)
-                self.channel_from_stellar_evolution.copy()
+                self.s2f.copy()
+                self.f2b.copy()
+                self.f2u.copy()
                 dt = self.stellar_evolution.particles.time_step.min()
 
             remaining_time = tend-self.bound.model_time
             self.stellar_evolution.evolve_model(self.bound.model_time+remaining_time/2)
-            self.channel_from_stellar_evolution.copy()
-            # print(initial_n_for_dt_soft, maximum_n_for_dt_soft)
-            # while remaining_time>0 | units.Myr:
-            #     # Calculate n as the ceil of the base-0.5 logarithm of the remaining time in n-body units
-            #     n = math.ceil(math.log(self.converter.to_nbody(remaining_time).number, 0.5))
-            #     # if required timestep is too small for dt_soft
-            #     if n <= initial_n_for_dt_soft:
-            #         print('good for big step')
-            #         dt_soft = 0.5**initial_n_for_dt_soft | nbody_system.time
-            #     else:
-            #         print('step too small')
-            #         dt_soft = 0.5**n | nbody_system.time
-
-
-            #     self.bound.parameters.dt_soft = dt_soft
-            #     print('dt_soft became', self.bound.parameters.dt_soft.in_(units.Myr))
-            #     # Evolve the model by dt_soft
-            #     self.bound.evolve_model(self.bound.model_time + self.converter.to_si(0.5**n | nbody_system.time))
-
-            #     # Update the remaining time
-            #     remaining_time = tend - self.bound.model_time
-            #     print('remaining time', remaining_time.in_(units.Myr))
+            self.s2f.copy()
+            self.f2b.copy()
+            self.f2u.copy()
+   
             self.bound.parameters.dt_soft = self.converter.to_si(0.5**maximum_n_for_dt_soft | nbody_system.time)
             self.bound.evolve_model(tend)
             self.bound.parameters.dt_soft=0 | units.Myr
             self.bound.evolve_model(self.bound.model_time)
             self.stellar_evolution.evolve_model(tend)
-            self.channel_from_stellar_evolution.copy()
+            self.s2f.copy()
+            self.f2b.copy()
+            self.f2u.copy()
         else:
+            # copying required in case bridge kicking happened
+            self.f2b.copy()
+            self.f2u.copy()
             self.bound.evolve_model(tend)
+        self.b2f.copy()
+        self.u2f.copy()
 
+    # really we should make some kind of tidal field class/object since we use these methods also in cluster_model.py
+    def get_tidalfield_at_point_per_gyr_sq(self,scale, x, y, z):
+        # perhaps this could vary, = self.rhalf
+        h = scale
+        ax0,ay0,az0 = self.external_get_gravity_at_point(0 | units.pc, x, y, z)
+        axx,ayx,azx = self.external_get_gravity_at_point(0 | units.pc, x+h, y, z)
+        axy,ayy,azy = self.external_get_gravity_at_point(0 | units.pc, x, y+h, z)
+        axz,ayz,azz = self.external_get_gravity_at_point(0 | units.pc, x, y, z+h)
+        Txx = ((axx-ax0)/h).value_in(units.gyr**-2)
+        Tyy = ((ayy-ay0)/h).value_in(units.gyr**-2)
+        Tzz = ((azz-az0)/h).value_in(units.gyr**-2)
+        Txy = ((axy-ax0)/h).value_in(units.gyr**-2)
+        Txz = ((axz-ax0)/h).value_in(units.gyr**-2)
+        Tyz = ((ayz-ay0)/h).value_in(units.gyr**-2)
+
+        return Txx, Tyy, Tzz, Txy, Txz, Tyz
+
+    def tidal_radius(self):
+        CoM = self.bound.particles.center_of_mass()
+        Txx, Tyy, Tzz, Txy, Txz, Tyz = self.get_tidalfield_at_point_per_gyr_sq(4 | units.pc, CoM.x, CoM.y, CoM.z)
+        tidal_tensor = np.array([[Txx, Txy, Txz],
+                                [Txy, Tyy, Tyz],
+                                [Txz, Tyz, Tzz]])
+
+        eigenvalues, _ = np.linalg.eig(tidal_tensor)
+        max_eigenvalue = np.max(np.abs(eigenvalues))| units.gyr**-2
+        omegasq = (np.abs(eigenvalues.sum())/3) | units.gyr**-2
+        T = max_eigenvalue + omegasq
+        return (constants.G * self.bound.particles.total_mass()/T)**(1/3)
+    
     def transfer_unbound_particles(self):
-        bound = self.bound.particles.bound_subset(unit_converter=self.converter,tidal_radius=self.bound.particles.LagrangianRadii(mf=[0.95])[0][0], strict=True)
-        new_unbound = self.bound.particles.difference(bound).copy()
+        # transfer unbound particles to the unbound code
+        current_framework_bound = self.particles.select(lambda x: not x.unbound_flag).copy()
+        bound_subset = current_framework_bound.bound_subset(unit_converter=self.converter,tidal_radius=self.tidal_radius(), strict=True)
+        new_unbound = self.particles.difference(bound_subset).select(lambda x: not x.escape_flag).copy()
         self.unbound.particles.add_particles(new_unbound)
         self.bound.particles.remove_particles(new_unbound)
-        if self.stellar_evolution:
-            # redefine channel just in case?
-            new_unbound=self.stellar_evolution.particles.difference(bound).copy()
-            self.unbound.stellar_evolution.particles.add_particles(new_unbound) # here we want to add the equivalent SE particles (with age and other properties!), not the dynamical ones
-            self.stellar_evolution.particles.remove_particles(new_unbound) # will this remove the correct particles?
-            self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius'])
-    
-    @property
-    def all_particles(self):
-        return ParticlesSuperset([self.bound.particles, self.unbound.particles])
-    
-    # has to only return cluster stars so these are kicked by bridge. Add unbound stars seperately 
-    @property
-    def particles(self):
-        return self.bound.particles
-    
+        # redeifine channel just in case?
+        self.u2f = self.unbound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
+        self.b2f = self.bound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
+        self.f2b = self.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
+        self.f2u = self.particles.new_channel_to(self.unbound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
 
 # a class to evolve the unbound star particles - allows us to place them in bridge seperately
 class drifter(object):
@@ -254,32 +284,67 @@ class drifter(object):
     derived system, represents unbound star particles
     provides: particles, evolve_model
     """
-    def __init__(self, particles=Particles(), initial_time=zero, stellar_evolution=None):
+    def __init__(self, particles=Particles(), initial_time=zero):
         # initialize unbound particles here
         self.particles = particles
         self.model_time = initial_time
-        self.stellar_evolution=None
-        if stellar_evolution:
-            self.stellar_evolution = stellar_evolution()
-            if len(self.particles) > 0:
-                self.stellar_evolution.particles.add_particles(self.particles)
         
     def evolve_model(self, tend):
         # evolve the unbound particles here
         if len(self.particles) > 0:
-            delta_t=tend-self.model_time
-            if self.stellar_evolution:
-                # seems like we have to keep redefining this...
-                self.channel_from_stellar_evolution = self.stellar_evolution.particles.new_channel_to(self.particles, attributes=['mass', 'radius'])
-                # since nothing else knows about the drifters we can just evolve a full step (as long as we don't have SN kicks)
-                # while self.model_time < tend:
-                    # dt = min(2.*self.stellar_evolution.particles.time_step.min(), tend-self.model_time)
-                self.stellar_evolution.evolve_model(self.model_time+delta_t/2)
-                self.channel_from_stellar_evolution.copy()
-                self.particles.position += self.particles.velocity * delta_t
-                self.stellar_evolution.evolve_model(self.model_time+delta_t)
-                self.channel_from_stellar_evolution.copy()
-                self.model_time = tend
-            else:
-                self.particles.position += self.particles.velocity * delta_t
-                self.model_time = tend
+            dt = tend - self.model_time
+            self.particles.position += self.particles.velocity * dt
+            self.model_time = tend
+
+# class for computing tidal fields
+class tidal_field(object):
+    """
+    tidal_field=tidal_field(grav_instance)
+    derived system, returns tidal field system with get_tidalfield_at_point
+    get_tidalfield_at_point_per_gyr_sq, and tidal_radius methods
+    """
+    def __init__(self,grav_instance):
+        self.grav_instance=grav_instance
+
+    def get_tidalfield_at_point(self,scale,x,y,z):
+        # perhaps this could vary, = self.rhalf
+        h = scale
+        ax0,ay0,az0 = self.grav_instance.get_gravity_at_point(0 | units.pc, x, y, z)
+        axx,ayx,azx = self.grav_instance.get_gravity_at_point(0 | units.pc, x+h, y, z)
+        axy,ayy,azy = self.grav_instance.get_gravity_at_point(0 | units.pc, x, y+h, z)
+        axz,ayz,azz = self.grav_instance.get_gravity_at_point(0 | units.pc, x, y, z+h)
+        Txx = ((axx-ax0)/h)
+        Tyy = ((ayy-ay0)/h)
+        Tzz = ((azz-az0)/h)
+        Txy = ((axy-ax0)/h)
+        Txz = ((axz-ax0)/h)
+        Tyz = ((ayz-ay0)/h)
+        return Txx,Tyy,Tzz,Txy,Txz,Tyz
+    
+    def get_tidalfield_at_point_per_gyr_sq(self,scale,x,y,z):
+        h = scale
+        Txx,Tyy,Tzz,Txy,Txz,Tyz=self.get_tidalfield_at_point(h,x,y,z)
+        Txx=Txx.value_in(units.gyr**-2)
+        Tyy=Tyy.value_in(units.gyr**-2)
+        Tzz=Tzz.value_in(units.gyr**-2)
+        Txy=Txy.value_in(units.gyr**-2)
+        Txz=Txz.value_in(units.gyr**-2)
+        Tyz=Tyz.value_in(units.gyr**-2)
+        return Txx,Tyy,Tzz,Txy,Txz,Tyz
+    
+    def tidal_radius(self, scale, x, y, z, satellite_mass):
+        eigenvalues = self.tidal_tensor_eigenvalues(scale, x, y, z)
+        max_eigenvalue = np.max(np.abs(eigenvalues))
+        omegasq = np.abs(eigenvalues.sum())/3
+        T = max_eigenvalue + omegasq
+        return (constants.G * satellite_mass/T)**(1/3)
+    
+    def tidal_tensor_eigenvalues(self, scale, x, y, z):
+        Txx, Tyy, Tzz, Txy, Txz, Tyz = self.get_tidalfield_at_point_per_gyr_sq(scale, x, y, z)
+        tidal_tensor = np.array([[Txx, Txy, Txz],
+                                [Txy, Tyy, Tyz],
+                                [Txz, Tyz, Tzz]])
+        eigenvalues, _ = np.linalg.eig(tidal_tensor)
+        eigenvalues = eigenvalues | units.gyr**-2
+        return eigenvalues
+
