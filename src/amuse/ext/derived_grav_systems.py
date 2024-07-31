@@ -84,9 +84,60 @@ class copycat(object):
         instance.stop()
         return phi
 
+# class for computing tidal fields
+class tidal_field(object):
+    """
+    tidal_field=tidal_field(grav_instance)
+    derived system, returns tidal field system with get_tidalfield_at_point
+    get_tidalfield_at_point_per_gyr_sq, and tidal_radius methods
+    """
+    def __init__(self,grav_instance):
+        self.grav_instance=grav_instance
+
+    def get_tidalfield_at_point(self,scale,x,y,z):
+        # perhaps this could vary, = self.rhalf
+        h = scale
+        ax0,ay0,az0 = self.grav_instance.get_gravity_at_point(0 | units.pc, x, y, z)
+        axx,ayx,azx = self.grav_instance.get_gravity_at_point(0 | units.pc, x+h, y, z)
+        axy,ayy,azy = self.grav_instance.get_gravity_at_point(0 | units.pc, x, y+h, z)
+        axz,ayz,azz = self.grav_instance.get_gravity_at_point(0 | units.pc, x, y, z+h)
+        Txx = ((axx-ax0)/h)
+        Tyy = ((ayy-ay0)/h)
+        Tzz = ((azz-az0)/h)
+        Txy = ((axy-ax0)/h)
+        Txz = ((axz-ax0)/h)
+        Tyz = ((ayz-ay0)/h)
+        return Txx,Tyy,Tzz,Txy,Txz,Tyz
+    
+    def get_tidalfield_at_point_per_gyr_sq(self,scale,x,y,z):
+        h = scale
+        Txx,Tyy,Tzz,Txy,Txz,Tyz=self.get_tidalfield_at_point(h,x,y,z)
+        Txx=Txx.value_in(units.gyr**-2)
+        Tyy=Tyy.value_in(units.gyr**-2)
+        Tzz=Tzz.value_in(units.gyr**-2)
+        Txy=Txy.value_in(units.gyr**-2)
+        Txz=Txz.value_in(units.gyr**-2)
+        Tyz=Tyz.value_in(units.gyr**-2)
+        return Txx,Tyy,Tzz,Txy,Txz,Tyz
+    
+    def tidal_radius(self, scale, x, y, z, satellite_mass):
+        eigenvalues = self.tidal_tensor_eigenvalues(scale, x, y, z)
+        max_eigenvalue = np.max(np.abs(eigenvalues))
+        omegasq = np.abs(eigenvalues.sum())/3
+        T = max_eigenvalue + omegasq
+        return (constants.G * satellite_mass/T)**(1/3)
+    
+    def tidal_tensor_eigenvalues(self, scale, x, y, z):
+        Txx, Tyy, Tzz, Txy, Txz, Tyz = self.get_tidalfield_at_point_per_gyr_sq(scale, x, y, z)
+        tidal_tensor = np.array([[Txx, Txy, Txz],
+                                [Txy, Tyy, Tyz],
+                                [Txz, Tyz, Tzz]])
+        eigenvalues, _ = np.linalg.eig(tidal_tensor)
+        eigenvalues = eigenvalues | units.gyr**-2
+        return eigenvalues
 
 # create a wrapper class for a gravity code to describe a star cluster including bound and unbound particles and stellar evolution
-class star_cluster(object):
+class star_cluster(tidal_field):
     """
     star_cluster=star_cluster(grav_instance,converter)
     derived system, returns star cluster system with
@@ -94,7 +145,10 @@ class star_cluster(object):
     base_class
     """
     def __init__(self,code,code_converter,bound_particles=None ,unbound_particles=None,W0=5, r_tidal=None | units.pc,r_half=None | units.pc, n_particles=None,
-                  M_cluster=False, code_number_of_workers=1, stellar_evolution = None, external_get_gravity_at_point=None):
+                  M_cluster=False, code_number_of_workers=1, stellar_evolution = None, field_code = None):
+        # inherit the tidal field stuff
+        super().__init__(field_code)
+        
         # initialize converter from SI to Nbody units
         self.converter=code_converter
         # initialize the code for handling bound cluster particles (collisional)
@@ -143,12 +197,11 @@ class star_cluster(object):
             # note - it is important that all required restart attributes are copied to the framework particles from SE
             self.s2f = self.stellar_evolution.particles.new_channel_to(self.particles)#, attributes=['mass', 'radius'])
             self.s2f.copy()
-        # define a particle attribute to keeping track of escaping stars
+        # define a particle attribute to keeping track of escaping stars. if this is true in prev timestep, we remove
+        # the particle if it is still unbound in the one being considered - hopefully remove some shot noise in removal
         self.particles.escape_flag = False
+        # this keeps track of what particles are in the unbound code
         self.particles.unbound_flag = False
-
-        # for computing the tidal radius
-        self.external_get_gravity_at_point = external_get_gravity_at_point
 
     def new_code_to_calculate_gravity(self): 
         result = self.field_code(self.converter, number_of_workers=self.field_code_number_of_workers, mode='cpu')  # this can be GPU based at some point
@@ -233,44 +286,18 @@ class star_cluster(object):
             self.bound.evolve_model(tend)
         self.b2f.copy()
         self.u2f.copy()
-
-    # really we should make some kind of tidal field class/object since we use these methods also in cluster_model.py
-    def get_tidalfield_at_point_per_gyr_sq(self,scale, x, y, z):
-        # perhaps this could vary, = self.rhalf
-        h = scale
-        ax0,ay0,az0 = self.external_get_gravity_at_point(0 | units.pc, x, y, z)
-        axx,ayx,azx = self.external_get_gravity_at_point(0 | units.pc, x+h, y, z)
-        axy,ayy,azy = self.external_get_gravity_at_point(0 | units.pc, x, y+h, z)
-        axz,ayz,azz = self.external_get_gravity_at_point(0 | units.pc, x, y, z+h)
-        Txx = ((axx-ax0)/h).value_in(units.gyr**-2)
-        Tyy = ((ayy-ay0)/h).value_in(units.gyr**-2)
-        Tzz = ((azz-az0)/h).value_in(units.gyr**-2)
-        Txy = ((axy-ax0)/h).value_in(units.gyr**-2)
-        Txz = ((axz-ax0)/h).value_in(units.gyr**-2)
-        Tyz = ((ayz-ay0)/h).value_in(units.gyr**-2)
-
-        return Txx, Tyy, Tzz, Txy, Txz, Tyz
-
-    def tidal_radius(self):
-        CoM = self.bound.particles.center_of_mass()
-        Txx, Tyy, Tzz, Txy, Txz, Tyz = self.get_tidalfield_at_point_per_gyr_sq(4 | units.pc, CoM.x, CoM.y, CoM.z)
-        tidal_tensor = np.array([[Txx, Txy, Txz],
-                                [Txy, Tyy, Tyz],
-                                [Txz, Tyz, Tzz]])
-
-        eigenvalues, _ = np.linalg.eig(tidal_tensor)
-        max_eigenvalue = np.max(np.abs(eigenvalues))| units.gyr**-2
-        omegasq = (np.abs(eigenvalues.sum())/3) | units.gyr**-2
-        T = max_eigenvalue + omegasq
-        return (constants.G * self.bound.particles.total_mass()/T)**(1/3)
     
     def transfer_unbound_particles(self):
         # transfer unbound particles to the unbound code
-        current_framework_bound = self.particles.select(lambda x: not x.unbound_flag).copy()
-        bound_subset = current_framework_bound.bound_subset(unit_converter=self.converter,tidal_radius=self.tidal_radius(), strict=True)
-        new_unbound = self.particles.difference(bound_subset).select(lambda x: not x.escape_flag).copy()
-        self.unbound.particles.add_particles(new_unbound)
-        self.bound.particles.remove_particles(new_unbound)
+        current_framework_bound = self.particles.select(lambda x: not x.unbound_flag)
+        CoM = current_framework_bound.center_of_mass()
+        bound_subset = current_framework_bound.bound_subset(unit_converter=self.converter,tidal_radius=self.tidal_radius(4|units.pc, CoM.x, CoM.y, CoM.z, current_framework_bound.total_mass()), strict=True)
+        new_unbound = self.particles.difference(bound_subset)
+        remove=new_unbound.select(lambda x: x.escape_flag).copy()
+        # update escape flag for particles that were not unbound last tstep but are now
+
+        self.unbound.particles.add_particles(remove)
+        self.bound.particles.remove_particles(remove)
         # redeifine channel just in case?
         self.u2f = self.unbound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
         self.b2f = self.bound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
@@ -295,56 +322,3 @@ class drifter(object):
             dt = tend - self.model_time
             self.particles.position += self.particles.velocity * dt
             self.model_time = tend
-
-# class for computing tidal fields
-class tidal_field(object):
-    """
-    tidal_field=tidal_field(grav_instance)
-    derived system, returns tidal field system with get_tidalfield_at_point
-    get_tidalfield_at_point_per_gyr_sq, and tidal_radius methods
-    """
-    def __init__(self,grav_instance):
-        self.grav_instance=grav_instance
-
-    def get_tidalfield_at_point(self,scale,x,y,z):
-        # perhaps this could vary, = self.rhalf
-        h = scale
-        ax0,ay0,az0 = self.grav_instance.get_gravity_at_point(0 | units.pc, x, y, z)
-        axx,ayx,azx = self.grav_instance.get_gravity_at_point(0 | units.pc, x+h, y, z)
-        axy,ayy,azy = self.grav_instance.get_gravity_at_point(0 | units.pc, x, y+h, z)
-        axz,ayz,azz = self.grav_instance.get_gravity_at_point(0 | units.pc, x, y, z+h)
-        Txx = ((axx-ax0)/h)
-        Tyy = ((ayy-ay0)/h)
-        Tzz = ((azz-az0)/h)
-        Txy = ((axy-ax0)/h)
-        Txz = ((axz-ax0)/h)
-        Tyz = ((ayz-ay0)/h)
-        return Txx,Tyy,Tzz,Txy,Txz,Tyz
-    
-    def get_tidalfield_at_point_per_gyr_sq(self,scale,x,y,z):
-        h = scale
-        Txx,Tyy,Tzz,Txy,Txz,Tyz=self.get_tidalfield_at_point(h,x,y,z)
-        Txx=Txx.value_in(units.gyr**-2)
-        Tyy=Tyy.value_in(units.gyr**-2)
-        Tzz=Tzz.value_in(units.gyr**-2)
-        Txy=Txy.value_in(units.gyr**-2)
-        Txz=Txz.value_in(units.gyr**-2)
-        Tyz=Tyz.value_in(units.gyr**-2)
-        return Txx,Tyy,Tzz,Txy,Txz,Tyz
-    
-    def tidal_radius(self, scale, x, y, z, satellite_mass):
-        eigenvalues = self.tidal_tensor_eigenvalues(scale, x, y, z)
-        max_eigenvalue = np.max(np.abs(eigenvalues))
-        omegasq = np.abs(eigenvalues.sum())/3
-        T = max_eigenvalue + omegasq
-        return (constants.G * satellite_mass/T)**(1/3)
-    
-    def tidal_tensor_eigenvalues(self, scale, x, y, z):
-        Txx, Tyy, Tzz, Txy, Txz, Tyz = self.get_tidalfield_at_point_per_gyr_sq(scale, x, y, z)
-        tidal_tensor = np.array([[Txx, Txy, Txz],
-                                [Txy, Tyy, Tyz],
-                                [Txz, Tyz, Tzz]])
-        eigenvalues, _ = np.linalg.eig(tidal_tensor)
-        eigenvalues = eigenvalues | units.gyr**-2
-        return eigenvalues
-

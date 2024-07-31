@@ -38,25 +38,72 @@ global nc
 nc =12.5 # 12.5 in paper ... maybe lowerfor us? 5?
 global tidal_shock_energy_fraction
 tidal_shock_energy_fraction =0.25 # - could be more physically motivated? written in terms of other parameters?
- 
+
+# stellar evolution parameters
+global main_sequence_lifetime_m_up
+main_sequence_lifetime_m_up = 3.3 | units.Myr
+global m_up_inf
+m_up_inf = 1.2 | units.MSun
+global a
+a=-2.7
+
+global psi1
+psi1=8.0 # this is different because mup is 100 for them!
+global psi0
+psi0 = 1.6
+
+global nu 
+nu = 0.07
+global Y
+Y = 90
+global b
+b=1.25
+global y 
+y = -0.3
 class internal_dynamics(tidal_field):
-    def __init__(self,N,mbar, rhalf, kappa, M_seg, grav_instance):
+    def __init__(self,N,mbar, rhalf, kappa, M_seg, grav_instance, stellar_evolution=False):
         self.N=N
         self.mbar=mbar
+        self.mbar_init = mbar
         self.rhalf=rhalf
         self.kappa=kappa
         self.M_seg=M_seg
         self.m_low = 0.1 | units.MSun
-        self.m_up = 15 | units.MSun
-        self.psi=14#8.0#13.5364073081 # this should depend on mass spectrum WITHIN rhalf   - !!!NOTE possibly this should be the case for many parameters including shape parameter and mean mass etc...
+        # self.m_up = 100 | units.MSun
+        self.m_up_init = 100 | units.MSun
+        # self.psi=14#8.0#13.5364073081 # this should depend on mass spectrum WITHIN rhalf   - !!!NOTE possibly this should be the case for many parameters including shape parameter and mean mass etc...
         # ok so i think we want mean mass to be for the whole cluster, buy psi should depend only within rhalf... makes it harder to relate to other variables like mbar...
         # perhaps M_seg and or kappa could relate mbar_h to mbar?
         self.rtidal = 0 | units.pc
         self.n_trh = 0
         self.n_trhp = 0
-
+        self.stellar_evolution = stellar_evolution
         super().__init__(grav_instance)
 
+        self.model_time = 0. | units.Myr
+
+    # stellar evolution quantities
+    def main_sequence_lifetime(self,mass):
+        return main_sequence_lifetime_m_up * (1 + np.log(mass/self.m_up_init)/np.log(self.m_up_init/m_up_inf))**a
+    
+    def f_ind(self):
+        if self.RhJ()>R1:
+            return Y * (self.RhJ() - R1)**b
+        else:
+            return 0
+    
+    def m_up(self):
+        return self.m_up_init*(self.m_up_init/m_up_inf)**()
+    
+    def mbar_s(self):
+        return self.mbar_init*(self.model_time/self.main_sequence_lifetime(self.m_up))**-nu
+        
+    def psi(self):
+        if self.model_time < self.main_sequence_lifetime(self.m_up):
+            return psi1
+        else:
+            return (psi1-psi0)*(self.model_time/self.main_sequence_lifetime(self.m_up))**y + psi0
+    
     # derived quantities
     def relaxation_time(self):
         return 0.138 * np.sqrt(self.N) * self.rhalf**1.5 / ((constants.G * self.mbar).sqrt() * np.log(gamma_c * self.N))
@@ -66,8 +113,11 @@ class internal_dynamics(tidal_field):
     def total_energy(self):
         return -self.kappa * constants.G*(self.N*self.mbar)**2./self.rhalf
 
+    def RhJ(self):
+        return self.rhalf/self.rtidal
+
     def P(self):
-        return ((self.rhalf/self.rtidal)/R1)**z * ((self.N*np.log(gamma_c*1.5e4))/(N1*np.log(gamma_c*self.N)))**(1-0.75)
+        return (self.RhJ()/R1)**z * ((self.N*np.log(gamma_c*1.5e4))/(N1*np.log(gamma_c*self.N)))**(1-0.75)
     
     def F(self):
         F=0.
@@ -81,7 +131,10 @@ class internal_dynamics(tidal_field):
     def xi(self):
         return self.xi_i() + self.xi_e()
     def xi_i(self):
-        return 0. # stellar evolution 0 for now
+        if self.stellar_evolution:
+            return self.f_ind()*self.gamma_se()
+        else:
+            return 0
     def xi_e(self):
         return self.F()*xi0 * (1-self.P()) + (f + (1-f)*self.F())*3/5 *zeta*self.P()
     
@@ -90,7 +143,10 @@ class internal_dynamics(tidal_field):
     def gamma_dyn(self):
         return (1-self.mesc()/self.mbar)* self.S()*self.U()*self.xi()
     def gamma_se(self):
-        return 0.
+        if self.stellar_evolution:
+            return -nu*self.relaxation_time_prime()/self.model_time *self.mbar_s/self.mbar
+        else:
+            return 0.
 
     def lambd(self):
         lambd=0.
@@ -101,11 +157,13 @@ class internal_dynamics(tidal_field):
     def epsilon(self):
         epsilon=zeta
         if self.n_trhp <= nc:
-            epsilon = 1./self.kappa * self.mesc()/self.mbar * self.rhalf/self.rtidal * self.xi()
+            epsilon = 1./self.kappa * self.mesc()/self.mbar * self.RhJ() * self.xi()
+            if self.model_time>self.main_sequence_lifetime(self.m_up):
+                epsilon += self.M_seg*self.gamma_se()
         return epsilon
     
     def mu(self):
-        return self.epsilon() -2*self.xi() +2*self.gamma() + self.lambd()
+        return self.epsilon() - 2 * self.xi() + 2 * self.gamma() + self.lambd()
     
     # other derived quantities
     def mesc(self):
@@ -151,12 +209,11 @@ class star_cluster_particle(internal_dynamics):
         self.particles.mass = mass
         self.particles.position = position
         self.particles.velocity = velocity
-        self.model_time = 0 | units.Myr
 
         # set up tidal shock tracking
-        self.last_max_evalues = [0,0,0]
+        self.last_max_evalues = [0,0,0] | units.Gyr**-2
         self.time_of_last_shock = [0,0,0]| units.Myr
-        self.eigenvalues = np.empty((0,3))
+        self.eigenvalues = np.empty((0,3)) | units.Gyr**-2
 
         super().__init__(N=18015, mbar=0.555131467864 | units.MSun, rhalf=half_mass_radius, kappa=0.2, M_seg=3, grav_instance=grav_instance)
 
@@ -191,19 +248,22 @@ class star_cluster_particle(internal_dynamics):
         # tidal tensor mass loss as position is not updated in this timestep - make this a funtion
         # Construct the tidal tensor
         eigenvalues = self.tidal_tensor_eigenvalues(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y, self.particles.position[0].z)
-        self.eigenvalues = np.append(self.eigenvalues, np.array([eigenvalues]), axis=0)
+        self.eigenvalues=np.append(self.eigenvalues,eigenvalues, axis=0)
         index=0
+        # assume shock happens evenly across cluster
+        dN=0
         for lam in eigenvalues:
             if np.abs(lam) < 0.88*self.last_max_evalues[index] and np.gradient(np.abs(self.eigenvalues[:,index]))[-1] >= 0:
                 # apply the shock for this component if any component drops below 88% of the last maximum and is approximately a minimum
-                # Awij = (1 + 0.237 * constants.G * self.particles.mass[0]/self.rhalf[0]**3 * (self.model_time-self.time_of_last_shock[-1])**2)**(-3/2)
-                Awij = 1
+                Awij = (1 + 0.237 * constants.G * self.N*self.mbar/self.rhalf**3 * (self.model_time-self.time_of_last_shock[-1])**2)**(-3/2)
+
                 # we need to integrate Tij dt over the time since the last shock - use scipy.integrate.simpson
+                # check dx here!
                 Itid = np.abs(simpson(self.eigenvalues[int(self.time_of_last_shock[index]/dt):,index], dx=dt.value_in(units.Gyr))/100)**2 * Awij
                 tshock = (self.model_time - self.time_of_last_shock[index]) * 65.6 * (self.particles.mass/(1e4 | units.MSun)) * (self.rhalf/(4 | units.pc))**-3\
                 * (Itid)**-1
-                # we can experiment here perhaps with form of mass loss - will require experimentation
-                self.N -=dt*self.N/tshock # interestingly we seem to have made this more complicated than the paper!
+
+                dN -= dt*self.N/tshock 
                 self.time_of_last_shock[index]=self.model_time
                 self.last_max_evalues[index] = lam
             else:
@@ -213,7 +273,9 @@ class star_cluster_particle(internal_dynamics):
             index+=1
 
         # half mass radius evolution due to tidal shocks
-        # self.rhalf +=self.rhalf/(self.N*self.mbar)*self.dm_shock*(2-1/tidal_shock_energy_fraction)
+        dr = dN*self.rhalf/self.N*(2-1/tidal_shock_energy_fraction)
+        self.N += dN
+        self.rhalf += dr
     
     def relaxation_evolution(self, tend):
         # try a small initial timestep - eventually this should only happen for very first call
@@ -229,9 +291,9 @@ class star_cluster_particle(internal_dynamics):
                 rhalf_5, rhalf_err = self.rk5_err(self.drdt(),internal_time,self.rhalf,dt)
                 kappa_5, kappa_err = self.rk5_err(self.dkdt(),internal_time,self.kappa,dt)
                 Mseg_5, Mseg_err = self.rk5_err(self.dMsegdt(),internal_time,self.M_seg,dt)
-                psi_5, psi_err = self.rk5_err(self.dpsidt(),internal_time,self.psi,dt)
+                # psi_5, psi_err = self.rk5_err(self.dpsidt(),internal_time,self.psi,dt)
                 ##^^ make grad zero after certain number of nc!!!!!!
-                err = max(N_err, mbar_err, rhalf_err, kappa_err, Mseg_err, psi_err)/tol# maybe this should be energy error? or the max error in the 4 quantities
+                err = max(N_err, mbar_err, rhalf_err, kappa_err, Mseg_err)/tol# maybe this should be energy error? or the max error in the 4 quantities
                 if err <= 1.0: break
                 if dt < 1.01*self.min_step(): break
                 step_test = 0.9*dt*(err)**-0.25
@@ -247,7 +309,7 @@ class star_cluster_particle(internal_dynamics):
             self.rhalf = rhalf_5
             self.kappa = kappa_5
             self.M_seg = Mseg_5
-            self.psi = psi_5
+            # self.psi = psi_5
             internal_time += dt
         print(internal_time.in_(units.Myr))
     
