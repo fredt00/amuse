@@ -229,6 +229,7 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False, softening_length_squared=(0.01 | units.pc)**2)
         integrator.add_code(system_cluster)
 
+    sys.stdout.flush()
     # evolve the bridge to the requested time
     while integrator.time < t_end:
         integrator.evolve_model(integrator.time+dt)
