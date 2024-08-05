@@ -26,10 +26,10 @@ f=0.3
 global z
 z=2 #1.61 for equal mass clusters
 global kapppa
-kappa_1=0.3#0.24 # ours seems to go to 0.9?
+kappa_1=0.24 # ours seems to go to 0.9?
 # chi between 0 and 1, depends on mass of escaping stars either mlow or mbar
 global Chi
-Chi= 0.8#0.55#0.35+(1-0.35)*(self.rhalf/rtidal)**1.1#0.3#0.55 in paper, we find for circular orbit we have to set 0.45
+Chi= 0.55#0.35+(1-0.35)*(self.rhalf/rtidal)**1.1#0.3#0.55 in paper, we find for circular orbit we have to set 0.45
 global q
 q=2 # doesn't seem very sensitive to this
 global M1
@@ -64,13 +64,14 @@ class internal_dynamics(tidal_field):
     def __init__(self,N,mbar, rhalf, kappa, M_seg, grav_instance, stellar_evolution=False):
         self.N=N
         self.mbar=mbar
+        self.mbar_se = mbar
         self.mbar_init = mbar
         self.rhalf=rhalf
         self.kappa=kappa
         self.M_seg=M_seg
         self.m_low = 0.1 | units.MSun
         # self.m_up = 100 | units.MSun
-        self.m_up_init = 100 | units.MSun
+        self.m_max = 100 | units.MSun
         # self.psi=14#8.0#13.5364073081 # this should depend on mass spectrum WITHIN rhalf   - !!!NOTE possibly this should be the case for many parameters including shape parameter and mean mass etc...
         # ok so i think we want mean mass to be for the whole cluster, buy psi should depend only within rhalf... makes it harder to relate to other variables like mbar...
         # perhaps M_seg and or kappa could relate mbar_h to mbar?
@@ -84,7 +85,7 @@ class internal_dynamics(tidal_field):
 
     # stellar evolution quantities
     def main_sequence_lifetime(self,mass):
-        return main_sequence_lifetime_m_up * (1 + np.log(mass/self.m_up_init)/np.log(self.m_up_init/m_up_inf))**a
+        return main_sequence_lifetime_m_up * (1 + np.log(mass/self.m_max)/np.log(self.m_max/m_up_inf))**a
     
     def f_ind(self):
         if self.RhJ()>R1:
@@ -93,22 +94,28 @@ class internal_dynamics(tidal_field):
             return 0
     
     def m_up(self):
-        return self.m_up_init*(self.m_up_init/m_up_inf)**()
-    
-    def mbar_s(self):
-        return self.mbar_init*(self.model_time/self.main_sequence_lifetime(self.m_up))**-nu
+        m_up = self.m_max
+        if self.model_time > main_sequence_lifetime_m_up:
+           m_up = self.m_max*pow(self.m_max/m_up_inf,pow(main_sequence_lifetime_m_up/self.model_time,0.37) - 1.0); 
+        m_up = np.sqrt(pow(m_up,2)+pow(m_up_inf,2))
+        return m_up
+
+    # def mbar_s(self):
+    #     if self.model_time==0 | units.Myr:
+    #         return self.mbar
+    #     return self.mbar_init*(self.model_time/main_sequence_lifetime_m_up)**-nu
         
     def psi(self):
-        if self.model_time < self.main_sequence_lifetime(self.m_up):
+        if self.model_time < main_sequence_lifetime_m_up:
             return psi1
         else:
-            return (psi1-psi0)*(self.model_time/self.main_sequence_lifetime(self.m_up))**y + psi0
+            return (psi1-psi0)*(self.model_time/main_sequence_lifetime_m_up)**y + psi0
     
     # derived quantities
     def relaxation_time(self):
-        return 0.138 * np.sqrt(self.N) * self.rhalf**1.5 / ((constants.G * self.mbar).sqrt() * np.log(gamma_c * self.N))
+        return 0.138 * np.sqrt(self.N * self.rhalf**3/(constants.G*self.mbar)) /np.log(gamma_c * self.N)
     def relaxation_time_prime(self):
-        return self.relaxation_time()/self.psi
+        return self.relaxation_time()/self.psi()
     
     def total_energy(self):
         return -self.kappa * constants.G*(self.N*self.mbar)**2./self.rhalf
@@ -143,8 +150,8 @@ class internal_dynamics(tidal_field):
     def gamma_dyn(self):
         return (1-self.mesc()/self.mbar)* self.S()*self.U()*self.xi()
     def gamma_se(self):
-        if self.stellar_evolution:
-            return -nu*self.relaxation_time_prime()/self.model_time *self.mbar_s/self.mbar
+        if self.stellar_evolution and self.model_time>main_sequence_lifetime_m_up:
+            return -nu*self.relaxation_time_prime()/self.model_time *self.mbar_se/self.mbar
         else:
             return 0.
 
@@ -158,7 +165,7 @@ class internal_dynamics(tidal_field):
         epsilon=zeta
         if self.n_trhp <= nc:
             epsilon = 1./self.kappa * self.mesc()/self.mbar * self.RhJ() * self.xi()
-            if self.model_time>self.main_sequence_lifetime(self.m_up):
+            if self.model_time>main_sequence_lifetime_m_up:
                 epsilon += self.M_seg*self.gamma_se()
         return epsilon
     
@@ -173,8 +180,9 @@ class internal_dynamics(tidal_field):
         return ((self.M_seg-3.)/(M1-3.))**q
     
     def U(self):
-        return (self.m_up - self.mbar)/self.m_up
-    
+        return np.abs(self.m_up() - self.mbar)/self.m_up() # should this be m_up(t) or m_max which is fixed???
+    # fundamentally we should not be counting stars that have evolved to lose mass?
+
     # derived rates divided by variable (so log rate)
     def dNdt(self):
         return - self.xi()/self.relaxation_time_prime()
@@ -186,24 +194,26 @@ class internal_dynamics(tidal_field):
         return self.mu()/self.relaxation_time_prime()
     def dmbardt(self):
         return self.gamma() / self.relaxation_time_prime()
+    def dmbar_se_dt(self):
+        return -self.gamma_se() / self.relaxation_time_prime()
+    
+
     def dtrhpdt(self):
         # for counting
         return 1./self.relaxation_time_prime()
     
-    def dpsidt(self):
+    # def dpsidt(self):
         #return -5/2*(1-self.F())*(self.dmbardt()/self.M_seg-self.dMsegdt()/self.M_seg**2)
         # return -5/2*(self.dmbardt() * (self.psi-7.8)-(1-self.F())*self.dMsegdt()/self.M_seg**2)
-        # return -5/2 * (self.dmbardt() - 1/3*self.dMsegdt()/self.M_seg)
-        return -5/2 *(self.dmbardt() - 0.5*self.dMsegdt())
-        # A=0.2 
-        # B=2.5
-        # return A*self.dMsegdt() -B*self.dmbardt()
     
     def min_step(self):
-        return self.relaxation_time_prime()/1e6
+        return 1.0/(1e6/self.relaxation_time_prime()+1e6/self.model_time)
 
+## TO DO
+# - fix rk integration to integrate all quantities at once
+# - add a unit converter to the class
 class star_cluster_particle(internal_dynamics):
-    def __init__(self, mass, half_mass_radius, position, velocity, grav_instance=None):
+    def __init__(self, mass, half_mass_radius, position, velocity, grav_instance=None, stellar_evolution=True):
         # set initial conditions
         self.particles = Particles(1)
         self.particles.mass = mass
@@ -215,7 +225,7 @@ class star_cluster_particle(internal_dynamics):
         self.time_of_last_shock = [0,0,0]| units.Myr
         self.eigenvalues = np.empty((0,3)) | units.Gyr**-2
 
-        super().__init__(N=18015, mbar=0.555131467864 | units.MSun, rhalf=half_mass_radius, kappa=0.2, M_seg=3, grav_instance=grav_instance)
+        super().__init__(N=18015, mbar=0.555131467864 | units.MSun, rhalf=half_mass_radius, kappa=0.2, M_seg=3, grav_instance=grav_instance, stellar_evolution=stellar_evolution)
 
     def evolve_model(self, tend):
         dt = tend - self.model_time
@@ -276,24 +286,63 @@ class star_cluster_particle(internal_dynamics):
         dr = dN*self.rhalf/self.N*(2-1/tidal_shock_energy_fraction)
         self.N += dN
         self.rhalf += dr
-    
+
+    def sim_ev(self,tend):
+        internal_time = self.model_time
+        tol = 1e-6
+        dt = tend - internal_time
+        # copy of the initial values
+        N_copy = self.N
+        mbar_copy = self.mbar
+        mbar_se_copy = self.mbar_se
+        rhalf_copy = self.rhalf
+        kappa_copy = self.kappa
+        M_seg_copy = self.M_seg
+
+        while internal_time < tend:
+            while True:
+                # we need to solve each step or rk in parallel for each variable so we can update rates accordingly
+                # first rk step
+                self.N = N_copy + dt * self.dNdt()*N_copy 
+                self.mbar = mbar_copy + dt * self.dmbardt()*mbar_copy
+                self.mbar_se = mbar_se_copy + dt * self.dmbar_se_dt()*mbar_copy
+                self.rhalf = rhalf_copy + dt * self.drdt()*rhalf_copy
+                self.kappa = kappa_copy + dt*self.dkdt()*kappa_copy
+                self.M_seg = M_seg_copy + dt*self.dMsegdt()*M_seg_copy
+
+                err = max(N_err, mbar_err, rhalf_err, kappa_err, Mseg_err, mbar_se_err)/tol# maybe this should be energy error? or the max error in the 4 quantities
+                if err <= 1.0: break
+                if dt < 1.01*self.min_step(): break
+                step_test = 0.9*dt*(err)**-0.25
+                if dt>=(0.0 | units.Myr):
+                    dt= max(step_test,0.1*dt)
+                else:
+                    dt=min(step_test,0.1*dt)
+            self.n_trh += dt/self.relaxation_time()
+            self.n_trhp += dt/self.relaxation_time_prime()
+
+            internal_time += dt
+
+
     def relaxation_evolution(self, tend):
         # try a small initial timestep - eventually this should only happen for very first call
         internal_time = self.model_time
         tol = 1e-6
         dt = tend - internal_time
+        # copy of the initial values
         while internal_time < tend:
             while True:
                 # update eqns 7-11 via adaptive 5th order RK
                 # order to solve in is N, mbar, rhalf, kappa, M_seg
                 N_5, N_err = self.rk5_err(self.dNdt(),internal_time,self.N,dt)
                 mbar_5, mbar_err = self.rk5_err(self.dmbardt(),internal_time,self.mbar,dt)
+                mbar_se_5, mbar_se_err = self.rk5_err(self.dmbar_se_dt(), internal_time, self.mbar,dt)
                 rhalf_5, rhalf_err = self.rk5_err(self.drdt(),internal_time,self.rhalf,dt)
                 kappa_5, kappa_err = self.rk5_err(self.dkdt(),internal_time,self.kappa,dt)
                 Mseg_5, Mseg_err = self.rk5_err(self.dMsegdt(),internal_time,self.M_seg,dt)
                 # psi_5, psi_err = self.rk5_err(self.dpsidt(),internal_time,self.psi,dt)
                 ##^^ make grad zero after certain number of nc!!!!!!
-                err = max(N_err, mbar_err, rhalf_err, kappa_err, Mseg_err)/tol# maybe this should be energy error? or the max error in the 4 quantities
+                err = max(N_err, mbar_err, rhalf_err, kappa_err, Mseg_err, mbar_se_err)/tol# maybe this should be energy error? or the max error in the 4 quantities
                 if err <= 1.0: break
                 if dt < 1.01*self.min_step(): break
                 step_test = 0.9*dt*(err)**-0.25
@@ -306,6 +355,7 @@ class star_cluster_particle(internal_dynamics):
 
             self.N = N_5
             self.mbar = mbar_5
+            self.mbar_se = mbar_se_5
             self.rhalf = rhalf_5
             self.kappa = kappa_5
             self.M_seg = Mseg_5
@@ -337,3 +387,19 @@ class star_cluster_particle(internal_dynamics):
         yn5 = y + ((2825/27648)*k1)+((18575/48384)*k3)+((13525/55296)*k4)+((277/14336)*k5)+((1/4)*k6)
         err = np.abs((yn4-yn5)/yn4)
         return yn4, err
+    
+    # takes a function for the gradients so it dynamically updates for each step
+    def rk45_func(self, f, x, y, h):
+        k1 = h*f(x,y)
+        k2 = h*f(x+(1/5)*h,y+((1/5)*k1)) 
+        k3 = h*f(x+(3/10)*h,y+((3/40)*k1)+((9/40)*k2))
+        k4 = h*f(x+(3/5)*h,y+((3/10)*k1)-((9/10)*k2)+((6/5)*k3))
+        k5 = h*f(x+(1/1)*h,y-((11/54)*k1)+((5/2)*k2)-((70/27)*k3)+((35/27)*k4))
+        k6 = h*f(x+(7/8)*h,y+((1631/55296)*k1)+((175/512)*k2)+((575/13824)*k3)+((44275/110592)*k4)+((253/4096)*k5))
+        yn4 = y + ((37/378)*k1)+((250/621)*k3)+((125/594)*k4)+((512/1771)*k6)
+        yn5 = y + ((2825/27648)*k1)+((18575/48384)*k3)+((13525/55296)*k4)+((277/14336)*k5)+((1/4)*k6)
+        err = np.abs((yn4-yn5)/yn4)
+        return yn4, err
+    
+    def stop(self):
+        pass

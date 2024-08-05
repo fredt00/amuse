@@ -304,9 +304,6 @@ def new_kroupa_mass_distribution(
 Create new stars / stellar properties
 """
 
-
-
-
 def new_masses(
     stellar_mass=False,
     initial_mass_function="kroupa",

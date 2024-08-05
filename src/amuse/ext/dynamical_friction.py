@@ -8,20 +8,21 @@ from amuse.support.exceptions import AmuseWarning
 ####################################################################
 # Class for computing dynamical friction for a given (spherical) static potential
 ####################################################################
-
+# To Do:
+# - non spherical potentials...
 class dynamical_friction():
     """
     Application of the Chandrasekhar Dynamical friction formula following Petts J. A., Read J. I., Gualandris A., 2016, MNRAS,463,858.
     
     :argument density_model: a class with methods mass_density(r), log_log_slope(r) and circular_velocity(r) for the background
     :argument code: the gravity (or drift) code containing the satellite
-    :argument r_half: the half mass radius of the satellite to be used in the case of a point mass
+    :argument r_half: the half mass radius of the satellite - method!
     """
-    def __init__(self, density_model, particles, G=constants.G, r_half=4.35 | units.pc):
+    def __init__(self, density_model, particles, half_mass_radius, G=constants.G):
         self.density_model = density_model
         self.particles=particles # we need to be able to access latest version of the particles... ideally without storing twice
         self.G = G
-        self.r_half = r_half
+        self.half_mass_radius = half_mass_radius
 
     def set_rv_mass(self):
         """update the satellite properties in the dynamical friction model
@@ -29,9 +30,6 @@ class dynamical_friction():
         self.x, self.y, self.z = self.particles.center_of_mass()
         self.velocity= self.particles.center_of_mass_velocity()
         self.r = np.sqrt(self.x ** 2.0 + self.y ** 2.0 + self.z ** 2.0)
-        # find the current half mass radius - slow!
-        if len(self.particles)>1:
-            self.r_half = self.particles.LagrangianRadii(mf=[0.5])[0][0]
         self.mass = self.particles.mass.sum()
 
     def get_gravity_at_point(self,eps,x,y,z):
@@ -44,94 +42,18 @@ class dynamical_friction():
     def dynamical_friction(self): 
         self.set_rv_mass()
         gamma = self.density_model.log_log_slope(self.r)
-        Lambda = self.r.value_in(units.pc)*min(1.,1./gamma)/max(self.r_half.value_in(units.pc),(self.G*self.mass/self.velocity.length()**2).value_in(units.pc)) 
+        Lambda = self.r.value_in(units.pc)*min(1.,1./gamma)/max(self.half_mass_radius().value_in(units.pc),(self.G*self.mass/self.velocity.length()**2).value_in(units.pc)) 
         coulomb_log = np.log(1 + Lambda**2)
-        sigma = self.sigmar(self.r)
+        sigma = self.sigmar()
         return -2*np.pi*coulomb_log*self.G**2 *self.mass*self.density_model.mass_density(self.r)*self.velocity/self.velocity.length()**3 *self.thermal_integral(self.velocity.length()/(2**.5*sigma))
 
     # solve the spherical jeans equation for velocity dispersion
-    def sigmar(self, r):
-        r_kpc = r.value_in(units.kpc)
+    def sigmar(self):
+        r_kpc = self.r.value_in(units.kpc)
         return ((quad(lambda x: self.density_model.mass_density(x | units.kpc).value_in(units.MSun/units.kpc**3) *
                                (self.density_model.circular_velocity(x | units.kpc)**2).value_in(units.kpc**2/units.s**2)/x,
-                                 r_kpc, np.inf,)[0]/ self.density_model.mass_density(r).value_in(units.MSun/units.kpc**3)) | units.kpc**2/units.s**2).sqrt()
+                                 r_kpc, np.inf,)[0]/ self.density_model.mass_density(self.r).value_in(units.MSun/units.kpc**3)) | units.kpc**2/units.s**2).sqrt()
 
     def thermal_integral(self, x):
         return math.erf(x) - 2*x/np.pi**.5 * np.exp(-x**2)
-    
-
-class NFW_profile(LiteratureReferencesMixIn):
-    """
-    Our own NFW profile that has additional functions for use in dynamical friction: log_log_slope
-    * density(r) = rho0 / [r/rs * (1+r/rs)^2], where is the spherical radius
-    * potential(r) = -4*pi*G*rho0*rs^2 * ln(1+r/rs)/(r/rs)
-    
-    .. [#] Navarro, Julio F.; Frenk, Carlos S.; White, Simon D. M., The Astrophysical Journal, Volume 490, Issue 2, pp. 493-508 (1996)
-    
-    :argument rho0: density parameter
-    :argument rs: scale radius
-    """
-    def __init__(self,rho0,rs,G=constants.G):
-        LiteratureReferencesMixIn.__init__(self)
-        self.rho0 = rho0
-        self.rs = rs
-        self.G = G
-        self.four_pi_rho0 = 4.*np.pi*self.rho0
-        self.four_pi_rho0_G = self.four_pi_rho0*self.G
-    
-    def radial_force(self,r):
-        r_rs = r/self.rs
-        ar = self.four_pi_rho0_G*self.rs**3*(1./(r*self.rs+r**2)-(1./r**2)*np.log(1.+r_rs))
-        return ar
-    def log_log_slope(self, r):
-        return (1 + 3*r/self.rs)/(1+r/self.rs)
-    
-    def get_potential_at_point(self,eps,x,y,z):
-        r = (x**2+y**2+z**2).sqrt()
-        r_rs = r/self.rs
-        return -1.*self.four_pi_rho0_G*self.rs**2*np.log(1.+r_rs)/r_rs
-    
-    def get_gravity_at_point(self,eps,x,y,z):
-        r = (x**2+y**2+z**2).sqrt()
-        fr = self.radial_force(r)
-        ax = fr*x/r
-        ay = fr*y/r
-        az = fr*z/r
-        return ax,ay,az
-    
-    def get_tidalfield_at_point(self,eps,x,y,z):
-        r = (x**2+y**2+z**2).sqrt()
-        xnorm = x/r
-        ynorm = y/r
-        znorm = z/r
-        fr = self.radial_force(r)
-        rhor = self.mass_density(r)
-        d = 4 | units.pc
-        # Txx = -(xnorm**2 + 2*xnorm -1)*fr/r + self.G*4 * np.pi *rhor * xnorm
-        # Tyy = -(ynorm**2 + 2*ynorm -1)*fr/r + self.G*4 * np.pi *rhor * ynorm
-        # Tzz = -(znorm**2 + 2*znorm -1)*fr/r + self.G*4 * np.pi *rhor * znorm
-        # Txy = -xnorm*ynorm * (self.G*4 * np.pi *rhor + 3*fr/r)
-        # Txz = -xnorm*znorm * (self.G*4 * np.pi *rhor + 3*fr/r)
-        # Tyz = -ynorm*znorm * (self.G*4 * np.pi *rhor + 3*fr/r)
-
-        Txx = -1/d**2 * (self.get_potential_at_point(eps,x+d,y,z) + self.get_potential_at_point(eps,x-d,y,z) - 2*self.get_potential_at_point(eps,x,y,z))
-        Tyy = -1/d**2 * (self.get_potential_at_point(eps,x,y+d,z) + self.get_potential_at_point(eps,x,y-d,z) - 2*self.get_potential_at_point(eps,x,y,z))
-        Tzz = -1/d**2 * (self.get_potential_at_point(eps,x,y,z+d) + self.get_potential_at_point(eps,x,y,z-d) - 2*self.get_potential_at_point(eps,x,y,z))
-        Txy = -1/(4*d**2) * (self.get_potential_at_point(eps,x+d,y+d,z) + self.get_potential_at_point(eps,x-d,y-d,z) - self.get_potential_at_point(eps,x+d,y-d,z) - self.get_potential_at_point(eps,x-d,y+d,z))
-        Txz = -1/(4*d**2) * (self.get_potential_at_point(eps,x+d,y,z+d) + self.get_potential_at_point(eps,x-d,y,z-d) - self.get_potential_at_point(eps,x+d,y,z-d) - self.get_potential_at_point(eps,x-d,y,z+d))
-        Tyz = -1/(4*d**2) * (self.get_potential_at_point(eps,x,y+d,z+d) + self.get_potential_at_point(eps,x,y-d,z-d) - self.get_potential_at_point(eps,x,y+d,z-d) - self.get_potential_at_point(eps,x,y-d,z+d))
-
-        return Txx, Tyy, Tzz, Txy, Txz, Tyz
-    
-    def enclosed_mass(self,r):
-        fr = self.radial_force(r)
-        return -r**2/self.G*fr
-    
-    def circular_velocity(self,r):
-        fr = self.radial_force(r)
-        return (-r*fr).sqrt()
-    
-    def mass_density(self,r):
-        r_rs = r/self.rs
-        return self.rho0 / (r_rs*(1.+r_rs)**2)
     

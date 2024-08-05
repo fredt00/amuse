@@ -12,9 +12,7 @@ except:
 
 class NFW_profile(LiteratureReferencesMixIn):
     """
-    Gravitational potential of the NFW (1996) halo
-    Two-power density spherical model suitable for modeling dark matter halos.
-    Density--potential pair:
+    Our own NFW profile that has additional functions for use in dynamical friction: log_log_slope
     * density(r) = rho0 / [r/rs * (1+r/rs)^2], where is the spherical radius
     * potential(r) = -4*pi*G*rho0*rs^2 * ln(1+r/rs)/(r/rs)
     
@@ -34,8 +32,9 @@ class NFW_profile(LiteratureReferencesMixIn):
     def radial_force(self,r):
         r_rs = r/self.rs
         ar = self.four_pi_rho0_G*self.rs**3*(1./(r*self.rs+r**2)-(1./r**2)*numpy.log(1.+r_rs))
-        #ar = self.four_pi_rho0_G*self.rs*((r_rs-(1.+r_rs)*numpy.log(1.+r_rs))/r_rs**2/(1.+r_rs))
         return ar
+    def log_log_slope(self, r):
+        return (1 + 3*r/self.rs)/(1+r/self.rs)
     
     def get_potential_at_point(self,eps,x,y,z):
         r = (x**2+y**2+z**2).sqrt()
