@@ -76,7 +76,7 @@ def configure_galaxy(N_halo, Mh, Rh, t_settle, galaxy_file, potential_option, po
                       dt,eps_gal_to_clu, galaxy_force_number_of_workers):
     if analytic:
         galaxy = convert_inputs_to_galactic_potential(potential_option, potential_parameters, potential_units)
-        galaxy_converter = None
+        gravity_from_galaxy = None
     else:
         if galaxy_file:
             galaxy_particles = read_hdf_and_get_requested_snapshot(galaxy_file, restart_time)
@@ -156,7 +156,7 @@ def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_positio
         if restart_time==0 | units.Myr:
             cluster.particles.position += Rinit
             cluster.particles.velocity += Vinit
-    return cluster
+    return cluster, Rinit, Vinit
     
 # The main function that sets up the simulation and evolves it
 def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0, N_halo = 10000, N_cluster = None, W0=5.0, r_half = None, r_tidal = None,
@@ -172,32 +172,33 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
     np.random.seed(123)
     if restart_file:
         cluster_file = "cluster_"+restart_file
-        galaxy_file = "galaxy_"+restart_file
+        if not analytic:
+            galaxy_file = "galaxy_"+restart_file
     # set up galaxy IC/potential
     galaxy, gravity_from_galaxy = configure_galaxy(N_halo, Mh, Rh, t_settle, galaxy_file, potential_option, potential_parameters,
                                                     potential_units, analytic, restart_time, dt,eps_gal_to_clu, galaxy_force_number_of_workers)
     
     # set up the cluster - new IC or read in
-    cluster = configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_position, initial_velocity, Vcirc_fraction, cluster_model,
+    cluster, Rinit, Vinit = configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_position, initial_velocity, Vcirc_fraction, cluster_model,
                        cluster_file, cluster_file_type, restart_time, stellar_evolution, galaxy, analytic, dt,
                          star_cluster_number_of_workers)
 
     if df_model:
         if cluster_model:
-            dyn_fric = dynamical_friction(galaxy, cluster.particles, r_half = cluster.half_mass_radius) #
+            dyn_fric = dynamical_friction(galaxy, cluster.particles, half_mass_radius = cluster.half_mass_radius) #
         else:
-            dyn_fric = dynamical_friction(galaxy, cluster.bound.particles, r_half = cluster.half_mass_radius) # need rh to update!
+            dyn_fric = dynamical_friction(galaxy, cluster.bound.particles, half_mass_radius = cluster.half_mass_radius) # need rh to update!
 
     if not restart_file:
         restart_file= 'sim_analytic_{:s}_df_model_{:s}_Mc{:g}W{:g}R{:g}V{:g}.hdf5'.format(str(analytic),str(df_model),
                                                                                             M_cluster.value_in(units.MSun),W0,
-                                                                                            Rinit.value_in(units.kpc), 
-                                                                                            Vinit.value_in(units.kms))
+                                                                                            Rinit.length().value_in(units.kpc), 
+                                                                                            Vinit.length().value_in(units.kms))
 
-    # store initial conditions
-    io.write_set_to_file(cluster.particles,'cluster_'+restart_file,'hdf5', timestamp=restart_time, append_to_file=False)
-    if not analytic:
-        io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
+        # store initial conditions
+        io.write_set_to_file(cluster.particles,'cluster_'+restart_file,'hdf5', timestamp=restart_time, append_to_file=False)
+        if not analytic:
+            io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
 
     # add them to bridge in correct configuration
     integrator=bridge.Bridge(verbose=True, timestep=dt, use_threading=True)
@@ -232,7 +233,6 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
     while integrator.time < t_end:
         integrator.evolve_model(integrator.time+dt)
         print('evolved to', integrator.time.in_(units.Myr)) 
-
         # save output
         if integrator.time.value_in(units.Myr) % output_interval.value_in(units.Myr)==0:
             cluster.transfer_unbound_particles()

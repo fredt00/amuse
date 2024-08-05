@@ -162,26 +162,26 @@ class star_cluster(tidal_field):
 
         # if restarting, add the particles to respective codes
         if particles:
-            self.bound.particles.add_particles(particles[particles.unbound_time<0 | units.Myr])
-            self.unbound.particles.add_particles(particles.difference(self.bound.particles))
             self.particles = particles
         else:
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scaling velocities accordingly
-            self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
+            cluster = self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
             self.particles = Particles()
-            self.particles.add_particles(self.bound.particles)
-            self.particles.add_particles(self.unbound.particles)
-            
+            self.particles.add_particles(cluster)
+        if time==0 | units.Myr:
+            # define a particle attribute to keeping track of escaping stars. if this is true in prev timestep, we remove
+            # the particle if it is still unbound in the one being considered - hopefully remove some shot noise in removal
+            self.particles.escape_flag = False
+            # this keeps track of what particles are in the unbound code and when they were added
+            self.particles.unbound_time = -1 | units.Myr
+        
+
+        self.bound.particles.add_particles(self.particles[particles.unbound_time<0 | units.Myr])
+        self.unbound.particles.add_particles(self.particles.difference(self.bound.particles))
         self.center_of_mass=center_of_mass(self.bound.particles)
   
         # evolve to 0 Myr so we have dt_soft set
         self.bound.evolve_model(0 | units.Myr)
-  
-        # initialize the framework particles that we will copy data to and from - this should remain constant in length
-        # no particles are added or removed to this set
-        
-        
-        # NOTE the below channels may need updating following particle transfers
 
         # initialize channels for copying data to the framework
         self.b2f = self.bound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
@@ -202,11 +202,6 @@ class star_cluster(tidal_field):
             self.s2f = self.stellar_evolution.particles.new_channel_to(self.particles)#, attributes=['mass', 'radius'])
             self.f2s = self.particles.new_channel_to(self.stellar_evolution.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz', 'mass', 'radius'])
             self.s2f.copy()
-        # define a particle attribute to keeping track of escaping stars. if this is true in prev timestep, we remove
-        # the particle if it is still unbound in the one being considered - hopefully remove some shot noise in removal
-        self.particles.escape_flag = False
-        # this keeps track of what particles are in the unbound code and when they were added
-        self.particles.unbound_time = -1 | units.Myr
 
     def new_code_to_calculate_gravity(self): 
         result = self.field_code(self.converter, number_of_workers=self.field_code_number_of_workers, mode='cpu')  # this can be GPU based at some point
@@ -217,7 +212,7 @@ class star_cluster(tidal_field):
         # we either fix the number of stars, or the total mass (down to stochastic fluctuations)
         m_stars = new_masses(stellar_mass=M_cluster,number_of_stars=n_particles, upper_mass_limit=100.0 | units.MSun,lower_mass_limit=0.1 | units.MSun)
         cluster = new_physical_king_model(W0, masses=m_stars, tidal_radius=r_tidal, half_mass_radius=r_half)
-        self.bound.particles.add_particles(cluster)
+        return cluster
 
     def half_mass_radius(self):
         return self.bound.particles.LagrangianRadii(mf=[0.5])[0][0]
@@ -233,7 +228,6 @@ class star_cluster(tidal_field):
     
     # evolve the bound particles
     def evolve_model(self,tend):
-        
         if self.stellar_evolution:
             self.f2s.copy()
             # here we need to stay in int (the exponent of 0.5) until calls to dynamics and SE to avoid floating point errors
@@ -278,7 +272,7 @@ class star_cluster(tidal_field):
             self.f2u.copy()
    
             self.bound.parameters.dt_soft = self.converter.to_si(0.5**maximum_n_for_dt_soft | nbody_system.time)
-            self.bound.evolve_model(self.bounds.model_time+remaining_time)
+            self.bound.evolve_model(self.bound.model_time+remaining_time)
             self.bound.parameters.dt_soft=0 | units.Myr
             self.bound.evolve_model(self.bound.model_time)
             self.stellar_evolution.evolve_model(tend)
@@ -295,7 +289,7 @@ class star_cluster(tidal_field):
         self.b2f.copy()
         self.u2f.copy()
         self.model_time = tend
-        
+
     def transfer_unbound_particles(self):
         # transfer unbound particles to the unbound code
         current_framework_bound = self.particles[self.particles.unbound_time<0 | units.Myr]
