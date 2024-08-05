@@ -159,7 +159,7 @@ class star_cluster(tidal_field):
         # unsure if we can set bound.model_time, etc so we will have a self.model_time that we know we can control
         self.model_time = time
         self.unbound.model_time = time
-        
+
         # if restarting, add the particles to respective codes
         if particles:
             self.bound.particles.add_particles(particles[particles.unbound_time<0 | units.Myr])
@@ -197,7 +197,7 @@ class star_cluster(tidal_field):
         if stellar_evolution:
             self.stellar_evolution = stellar_evolution()
             self.stellar_evolution.model_time = time
-            self.stellar_evolution.particles.add_particles(self.bound.particles)
+            self.stellar_evolution.particles.add_particles(self.particles)
             # note - it is important that all required restart attributes are copied to the framework particles from SE
             self.s2f = self.stellar_evolution.particles.new_channel_to(self.particles)#, attributes=['mass', 'radius'])
             self.f2s = self.particles.new_channel_to(self.stellar_evolution.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz', 'mass', 'radius'])
@@ -251,7 +251,7 @@ class star_cluster(tidal_field):
                 if n_min_se_time_step > maximum_n_allowed:
                     n_min_se_time_step = maximum_n_allowed
                 dt = self.converter.to_si(0.5**n_min_se_time_step | nbody_system.time)
-                self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
+                self.stellar_evolution.evolve_model(self.model_time+dt/2)
                 self.s2f.copy()
                 self.f2b.copy()
                 self.f2u.copy()
@@ -265,20 +265,20 @@ class star_cluster(tidal_field):
                     self.bound.parameters.dt_soft=0.5**initial_n_for_dt_soft | nbody_system.time
 
                 self.bound.evolve_model(self.bound.model_time+dt)
-                self.stellar_evolution.evolve_model(self.bound.model_time)
+                self.stellar_evolution.evolve_model(self.model_time+dt)
                 self.s2f.copy()
                 self.f2b.copy()
                 self.f2u.copy()
                 dt = self.stellar_evolution.particles.time_step.min()
 
-            remaining_time = tend-self.bound.model_time
-            self.stellar_evolution.evolve_model(self.bound.model_time+remaining_time/2)
+            remaining_time = tend-self.model_time
+            self.stellar_evolution.evolve_model(self.model_time+remaining_time/2)
             self.s2f.copy()
             self.f2b.copy()
             self.f2u.copy()
    
             self.bound.parameters.dt_soft = self.converter.to_si(0.5**maximum_n_for_dt_soft | nbody_system.time)
-            self.bound.evolve_model(tend)
+            self.bound.evolve_model(self.bounds.model_time+remaining_time)
             self.bound.parameters.dt_soft=0 | units.Myr
             self.bound.evolve_model(self.bound.model_time)
             self.stellar_evolution.evolve_model(tend)
@@ -287,13 +287,15 @@ class star_cluster(tidal_field):
             self.f2u.copy()
         else:
             # copying required in case bridge kicking happened
+            dt = tend - self.model_time
             self.f2b.copy()
             self.f2u.copy()
-            self.bound.evolve_model(tend)
+            self.bound.evolve_model(self.bound.model_time+dt)
         self.unbound._evolve_model(tend) # update the unbound particles - this should work ok in bridge because evolves happen after kicking
         self.b2f.copy()
         self.u2f.copy()
-    
+        self.model_time = tend
+        
     def transfer_unbound_particles(self):
         # transfer unbound particles to the unbound code
         current_framework_bound = self.particles[self.particles.unbound_time<0 | units.Myr]

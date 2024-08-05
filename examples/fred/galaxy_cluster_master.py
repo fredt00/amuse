@@ -13,18 +13,17 @@ from amuse.ext.derived_grav_systems import star_cluster
 import amuse.ext.galactic_potentials as galactic_potentials
 import inspect
 import argparse
-from inspect import isclass
 from amuse.ext.cluster_model import star_cluster_particle
 
 def setup_live_galaxy(Nh=1e5, Mh=1e10 | units.MSun,Rscale=4.1 | units.kpc, t_settle=0|units.Myr, dt=1 | units.Myr, epsilon=88.6 | units.pc):
     converter= nbody_system.nbody_to_si(Mh, Rscale)
     # halo
     galaxy = new_halogen_model(Nh, converter, alpha=1, beta=3, gamma=1, 
-                            scale_radius=Rscale,cutoff_radius=10.*Rscale)
+                            scale_radius=Rscale, cutoff_radius=10.*Rscale)
     
     galaxy.move_to_center()
     # try fastkick for faster potential computation
-    scaler = FastKick(converter, number_of_workers=6)
+    scaler = FastKick(converter, number_of_workers=8)
     scaler.epsilon_squared = converter.to_nbody(epsilon**2)
     scaler.particles.add_particles(galaxy)
     potential_energy = scaler.get_potential_energy()
@@ -33,7 +32,6 @@ def setup_live_galaxy(Nh=1e5, Mh=1e10 | units.MSun,Rscale=4.1 | units.kpc, t_set
     converter_gadget=nbody_system.nbody_to_si(dt, Mh)
     if t_settle>0|units.Myr:
         print('evolving galaxy IC to', t_settle.in_(units.Gyr), 'to allow it to settle')
-
         gravity_gal = Fi(converter_gadget,mode='openmp',redirection='file',redirect_file='output_fi.txt')
         gravity_gal.parameters.epsilon_squared=converter_gadget.to_nbody(epsilon**2)
         gravity_gal.parameters.use_hydro_flag=False
@@ -42,8 +40,8 @@ def setup_live_galaxy(Nh=1e5, Mh=1e10 | units.MSun,Rscale=4.1 | units.kpc, t_set
         gravity_gal.evolve_model(t_settle)
         channel_to_galaxy.copy()
         gravity_gal.stop()
-    # recenter
-    galaxy.move_to_center()
+        # recenter
+        galaxy.move_to_center()
     return galaxy
 
 def convert_inputs_to_galactic_potential(potential_option, potential_parameters, potential_units):
@@ -206,7 +204,10 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
     integrator.time = restart_time
 
     if analytic:
-        integrator.add_system(cluster, (galaxy, df_model,), do_sync=True)
+        if df_model:
+            integrator.add_system(cluster, (galaxy, dyn_fric,), do_sync=True)
+        else:
+            integrator.add_system(cluster, (galaxy,), do_sync=True)
         integrator.add_system(cluster.unbound, (galaxy, cluster,), do_sync=True)
     elif df_model:
         system=bridge.GravityCodeInField(cluster, (galaxy, df_model,), do_sync=True, verbose=True,
@@ -287,7 +288,7 @@ def new_argument_parser():
                       help="A file to read in Nbody initial condition for the galaxy (default: %(default)s)")
     
     # in case of analytic
-    result.add_argument("--potential_option", dest='potential_option', choices= [x for x in dir(galactic_potentials) if isclass(getattr(galactic_potentials, x))][2:], 
+    result.add_argument("--potential_option", dest='potential_option', choices= [x for x in dir(galactic_potentials) if inspect.isclass(getattr(galactic_potentials, x))][2:], 
                         default='MWpotentialBovy2015',
                       help="choice of potential profile for the galaxy halo, options in amuse/ext/galactic_potentials.py (default: %(default)s)"),
     # analytic inputs to be given in order - units to be given in next argument in same order!
