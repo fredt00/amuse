@@ -185,18 +185,17 @@ class internal_dynamics(tidal_field):
 
     # derived rates divided by variable (so log rate)
     def dNdt(self):
-        return - self.xi()/self.relaxation_time_prime()
-    def dMsegdt(self):
-        return (M1-self.M_seg) /self.relaxation_time_prime()
-    def dkdt(self):
-        return self.lambd() / self.relaxation_time_prime()
-    def drdt(self):
-        return self.mu()/self.relaxation_time_prime()
+        return - self.xi() * self.N/self.relaxation_time_prime()
     def dmbardt(self):
-        return self.gamma() / self.relaxation_time_prime()
+        return self.gamma() * self.mbar/ self.relaxation_time_prime()
+    def dMsegdt(self):
+        return (M1-self.M_seg) * self.M_seg/self.relaxation_time_prime()
+    def dkdt(self):
+        return self.lambd() * self.kappa/ self.relaxation_time_prime()
+    def drdt(self):
+        return self.mu() * self.rhalf/self.relaxation_time_prime()
     def dmbar_se_dt(self):
-        return -self.gamma_se() / self.relaxation_time_prime()
-    
+        return -self.gamma_se() * self.mbar/ self.relaxation_time_prime()
 
     def dtrhpdt(self):
         # for counting
@@ -209,12 +208,27 @@ class internal_dynamics(tidal_field):
     def min_step(self):
         return 1.0/(1e6/self.relaxation_time_prime()+1e6/self.model_time)
 
+    # an array containing all the evolved parameters to let us update them simultaneously 
+    def get_nbody(self):
+        return np.array([self.N, self.mbar, self.mbar_se, self.rhalf, self.n_trhp, self.kappa, self.M_seg])
+    
+    def set_nbody(self, nbody):
+        self.N = nbody[0]
+        self.mbar = nbody[1]
+        self.mbar_se = nbody[2]
+        self.rhalf = nbody[3]
+        self.n_trhp = nbody[4]
+        self.kappa = nbody[5]
+        self.M_seg = nbody[6]
+    
+    def rate_array(self):
+        return np.array([self.dNdt(), self.dmbardt(), self.dmbar_se_dt(), self.drdt(), self.dtrhpdt(), self.dkdt(), self.dMsegdt()])
+
 ## TO DO
-# - fix rk integration to integrate all quantities at once
 # - add a unit converter to the class
 class star_cluster_particle(internal_dynamics):
     def __init__(self, mass, half_mass_radius, position, velocity, grav_instance=None, stellar_evolution=True):
-        # set initial conditions
+        # set initial conditions - has to be particles to function with bridge
         self.particles = Particles(1)
         self.particles.mass = mass
         self.particles.position = position
@@ -231,34 +245,35 @@ class star_cluster_particle(internal_dynamics):
         dt = tend - self.model_time
 
         # evolve the EMACSS model - leapfrog 
-        self.internal_evolution(self.model_time+dt/2)
+        self.internal_evolution(self.model_time + dt/2)
 
         # update particle position
-        self.particles.position+=self.particles.velocity*dt
+        self.particles.position += self.particles.velocity * dt
 
         # evolve the EMACSS model - leapfrog
         self.internal_evolution(tend)
 
     def internal_evolution(self, tend):
-        # think about the order here!
-        # tidal evolution - computes shock mass loss and change of rh
         # set tidal radius
-        self.rtidal = self.tidal_radius(4 | units.pc,self.particles.position[0].x, self.particles.position[0].y, self.particles.position[0].z, self.particles.mass[0])
-        self.tidal_evolution(tend)
+        self.rtidal = self.tidal_radius(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
+                                         self.particles.position[0].z, self.particles.mass[0])
+        
+        # tidal evolution - computes shock mass loss and change of rh
+        self.tidal_shock_evolution(tend)
     
         # relaxation evolution 
         self.relaxation_evolution(tend)
 
         self.particles.mass = self.mbar * self.N
-        self.model_time=tend
+        self.model_time = tend
 
-    def tidal_evolution(self, tend):
+    def tidal_shock_evolution(self, tend):
         dt = tend - self.model_time
         # here we do the same rk steps for all quantities, then check error with N as this is most important
         # tidal tensor mass loss as position is not updated in this timestep - make this a funtion
         # Construct the tidal tensor
         eigenvalues = self.tidal_tensor_eigenvalues(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y, self.particles.position[0].z)
-        self.eigenvalues=np.append(self.eigenvalues,eigenvalues, axis=0)
+        self.eigenvalues=np.append(self.eigenvalues, eigenvalues, axis=0)
         index=0
         # assume shock happens evenly across cluster
         dN=0
@@ -287,82 +302,72 @@ class star_cluster_particle(internal_dynamics):
         self.N += dN
         self.rhalf += dr
 
-    def sim_ev(self,tend):
+    def relaxation_evolution(self,tend):
         internal_time = self.model_time
         tol = 1e-6
         dt = tend - internal_time
         # copy of the initial values
-        N_copy = self.N
-        mbar_copy = self.mbar
-        mbar_se_copy = self.mbar_se
-        rhalf_copy = self.rhalf
-        kappa_copy = self.kappa
-        M_seg_copy = self.M_seg
+        duplicate_array = self.get_nbody()
+        # rk coefficients
+        b21=0.2
+        b31=3.0/40.0
+        b32=9.0/40.0
+        b41=0.3
+        b42 = -0.9
+        b43=1.2
+        b51 = -11.0/54.0 
+        b52=2.5
+        b53 = -70.0/27.0
+        b54=35.0/27.0
+        b61=1631.0/55296.0
+        b62=175.0/512.0
+        b63=575.0/13824.0
+        b64=44275.0/110592.0
+        b65=253.0/4096.0
+        c1=37.0/378.0
+        c3=250.0/621.0
+        c4=125.0/594.0
+        c6=512.0/1771.0
+        dc5 = -277.00/14336.0
+        dc1=c1-2825.0/27648.0
+        dc3=c3-18575.0/48384.0
+        dc4=c4-13525.0/55296.0
+        dc6=c6-0.25
 
         while internal_time < tend:
             while True:
                 # we need to solve each step or rk in parallel for each variable so we can update rates accordingly
+                self.set_nbody(duplicate_array)
                 # first rk step
-                self.N = N_copy + dt * self.dNdt()*N_copy 
-                self.mbar = mbar_copy + dt * self.dmbardt()*mbar_copy
-                self.mbar_se = mbar_se_copy + dt * self.dmbar_se_dt()*mbar_copy
-                self.rhalf = rhalf_copy + dt * self.drdt()*rhalf_copy
-                self.kappa = kappa_copy + dt*self.dkdt()*kappa_copy
-                self.M_seg = M_seg_copy + dt*self.dMsegdt()*M_seg_copy
+                dr1 = self.rate_array()
+                self.set_nbody(duplicate_array + [dt] * (b21 * dr1))
+                # second rk step
+                dr2 = self.rate_array()
+                self.set_nbody(duplicate_array + [dt] * (b31 * dr1 + b32 * dr2))
+                # third rk step
+                dr3 = self.rate_array() 
+                self.set_nbody(duplicate_array + [dt] * (b41 * dr1 + b42 * dr2 + b43 * dr3))
+                # fourth rk step
+                dr4 = self.rate_array()
+                self.set_nbody(duplicate_array + [dt] * (b51 * dr1 + b52 * dr2 + b53 * dr3 + b54 * dr4))
+                # fifth rk step
+                dr5 = self.rate_array()
+                self.set_nbody(duplicate_array + [dt] * (b61 * dr1 + b62 * dr2 + b63 * dr3 + b64 * dr4 + b65 * dr5))
+                # sixth rk step
+                dr6 = self.rate_array()
+                self.set_nbody(duplicate_array + [dt] * (c1 * dr1 + c3 * dr3 + c4 * dr4 + c6 * dr6))
+                err = max([dt] * (dc1 * dr1 + dc3 * dr3 + dc4 * dr4 + dc5 * dr5 + dc6 * dr6)/(tol * self.get_nbody()))
 
-                err = max(N_err, mbar_err, rhalf_err, kappa_err, Mseg_err, mbar_se_err)/tol# maybe this should be energy error? or the max error in the 4 quantities
                 if err <= 1.0: break
-                if dt < 1.01*self.min_step(): break
-                step_test = 0.9*dt*(err)**-0.25
-                if dt>=(0.0 | units.Myr):
-                    dt= max(step_test,0.1*dt)
+                if dt < 1.01 * self.min_step(): break
+                step_test = 0.9 * dt * (err) ** -0.25
+                if dt >= (0.0 | units.Myr):
+                    dt = max(step_test, 0.1 * dt)
                 else:
-                    dt=min(step_test,0.1*dt)
-            self.n_trh += dt/self.relaxation_time()
-            self.n_trhp += dt/self.relaxation_time_prime()
+                    dt = min(step_test, 0.1 * dt)
 
             internal_time += dt
 
-
-    def relaxation_evolution(self, tend):
-        # try a small initial timestep - eventually this should only happen for very first call
-        internal_time = self.model_time
-        tol = 1e-6
-        dt = tend - internal_time
-        # copy of the initial values
-        while internal_time < tend:
-            while True:
-                # update eqns 7-11 via adaptive 5th order RK
-                # order to solve in is N, mbar, rhalf, kappa, M_seg
-                N_5, N_err = self.rk5_err(self.dNdt(),internal_time,self.N,dt)
-                mbar_5, mbar_err = self.rk5_err(self.dmbardt(),internal_time,self.mbar,dt)
-                mbar_se_5, mbar_se_err = self.rk5_err(self.dmbar_se_dt(), internal_time, self.mbar,dt)
-                rhalf_5, rhalf_err = self.rk5_err(self.drdt(),internal_time,self.rhalf,dt)
-                kappa_5, kappa_err = self.rk5_err(self.dkdt(),internal_time,self.kappa,dt)
-                Mseg_5, Mseg_err = self.rk5_err(self.dMsegdt(),internal_time,self.M_seg,dt)
-                # psi_5, psi_err = self.rk5_err(self.dpsidt(),internal_time,self.psi,dt)
-                ##^^ make grad zero after certain number of nc!!!!!!
-                err = max(N_err, mbar_err, rhalf_err, kappa_err, Mseg_err, mbar_se_err)/tol# maybe this should be energy error? or the max error in the 4 quantities
-                if err <= 1.0: break
-                if dt < 1.01*self.min_step(): break
-                step_test = 0.9*dt*(err)**-0.25
-                if dt>=(0.0 | units.Myr):
-                    dt= max(step_test,0.1*dt)
-                else:
-                    dt=min(step_test,0.1*dt)
-            self.n_trh += dt/self.relaxation_time()
-            self.n_trhp += dt/self.relaxation_time_prime()
-
-            self.N = N_5
-            self.mbar = mbar_5
-            self.mbar_se = mbar_se_5
-            self.rhalf = rhalf_5
-            self.kappa = kappa_5
-            self.M_seg = Mseg_5
-            # self.psi = psi_5
-            internal_time += dt
-        print(internal_time.in_(units.Myr))
-    
     def get_gravity_at_point(self,radius,x,y,z):
         mass=self.particles.mass[0]
         xx,yy,zz=self.particles[0].position
@@ -375,31 +380,6 @@ class star_cluster_particle(internal_dynamics):
         az=constants.G*mass*(zz-z)/dr2**1.5
         
         return ax,ay,az
-    
-    def rk5_err(self, f, x, y, h):
-        k1 = h*f*y
-        k2 = h*f*(y+((1/5)*k1)) 
-        k3 = h*f*(y+((3/40)*k1)+((9/40)*k2))
-        k4 = h*f*(y+((3/10)*k1)-((9/10)*k2)+((6/5)*k3))
-        k5 = h*f*(y-((11/54)*k1)+((5/2)*k2)-((70/27)*k3)+((35/27)*k4))
-        k6 = h*f*(y+((1631/55296)*k1)+((175/512)*k2)+((575/13824)*k3)+((44275/110592)*k4)+((253/4096)*k5))
-        yn4 = y + ((37/378)*k1)+((250/621)*k3)+((125/594)*k4)+((512/1771)*k6)
-        yn5 = y + ((2825/27648)*k1)+((18575/48384)*k3)+((13525/55296)*k4)+((277/14336)*k5)+((1/4)*k6)
-        err = np.abs((yn4-yn5)/yn4)
-        return yn4, err
-    
-    # takes a function for the gradients so it dynamically updates for each step
-    def rk45_func(self, f, x, y, h):
-        k1 = h*f(x,y)
-        k2 = h*f(x+(1/5)*h,y+((1/5)*k1)) 
-        k3 = h*f(x+(3/10)*h,y+((3/40)*k1)+((9/40)*k2))
-        k4 = h*f(x+(3/5)*h,y+((3/10)*k1)-((9/10)*k2)+((6/5)*k3))
-        k5 = h*f(x+(1/1)*h,y-((11/54)*k1)+((5/2)*k2)-((70/27)*k3)+((35/27)*k4))
-        k6 = h*f(x+(7/8)*h,y+((1631/55296)*k1)+((175/512)*k2)+((575/13824)*k3)+((44275/110592)*k4)+((253/4096)*k5))
-        yn4 = y + ((37/378)*k1)+((250/621)*k3)+((125/594)*k4)+((512/1771)*k6)
-        yn5 = y + ((2825/27648)*k1)+((18575/48384)*k3)+((13525/55296)*k4)+((277/14336)*k5)+((1/4)*k6)
-        err = np.abs((yn4-yn5)/yn4)
-        return yn4, err
     
     def stop(self):
         pass
