@@ -116,7 +116,6 @@ def setup_cluster_from_file(cluster_file, cluster_file_type, restart_time=0 | un
         cluster.mass = data[:,0] | units.MSun
         cluster.position = data[:,1:4] | units.pc
         cluster.velocity = data[:,4:7] | units.kms
-    
     return cluster
 
 def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_position, initial_velocity, Vcirc_fraction, cluster_model,
@@ -152,7 +151,7 @@ def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_positio
         if cluster_file:
             cluster_particles = setup_cluster_from_file(cluster_file, cluster_file_type, restart_time)
         cluster = star_cluster(code=petar, code_converter=converter, particles=cluster_particles, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster,
-                                    M_cluster=M_cluster,code_number_of_workers=star_cluster_number_of_workers, stellar_evolution=stellar_evolution, time=restart_time)
+                                    M_cluster=M_cluster,code_number_of_workers=star_cluster_number_of_workers, stellar_evolution=stellar_evolution, field_code = galaxy, time=restart_time)
         if restart_time==0 | units.Myr:
             cluster.particles.position += Rinit
             cluster.particles.velocity += Vinit
