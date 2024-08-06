@@ -162,13 +162,10 @@ class star_cluster(tidal_field):
         self.unbound.model_time = time
 
         # if restarting, add the particles to respective codes
-        if particles:
-            self.particles = particles
-        else:
+        if particles==None:
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scaling velocities accordingly
-            cluster = self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
-            self.particles = Particles()
-            self.particles.add_particles(cluster)
+            particles = self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
+        self.particles=particles
         if time==0 | units.Myr:
             # define a particle attribute to keeping track of escaping stars. if this is true in prev timestep, we remove
             # the particle if it is still unbound in the one being considered - hopefully remove some shot noise in removal
@@ -177,7 +174,7 @@ class star_cluster(tidal_field):
             self.particles.unbound_time = -1 | units.Myr
         
 
-        self.bound.particles.add_particles(self.particles[particles.unbound_time<0 | units.Myr])
+        self.bound.particles.add_particles(self.particles[self.particles.unbound_time<0 | units.Myr])
         self.unbound.particles.add_particles(self.particles.difference(self.bound.particles))
         self.center_of_mass=center_of_mass(self.bound.particles)
   
