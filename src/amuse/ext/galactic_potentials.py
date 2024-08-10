@@ -271,3 +271,46 @@ class MWpotentialBovy2015(LiteratureReferencesMixIn):
     def enclosed_mass(self,r):
         return self.bulge.enclosed_mass(r)+self.disk.equivalent_enclosed_mass_in_plane(r)+self.halo.enclosed_mass(r)
     
+
+class isothermal_sphere(LiteratureReferencesMixIn):
+    """
+    Isothermal sphere density profile
+    * density(r) = sigma**2 / (2*pi*G*r**2)
+    * potential(r) = 2*sigma**2 * log(r/r0) + constant/r
+    
+    .. [#] Binney, J.; Tremaine, S., Galactic Dynamics, 2nd ed., Princeton University Press (2008)
+    
+    :argument sigma: velocity dispersion
+    :argument r0: core radius
+    """
+    def __init__(self,Vc,G=constants.G):
+        LiteratureReferencesMixIn.__init__(self)
+        self.sigma = Vc/(2**.5)
+        self.G = G
+        self.sigma2 = self.sigma**2
+        self.sigma2_G = self.sigma2/self.G
+    
+    def get_potential_at_point(self,eps,x,y,z):
+        r = (x**2+y**2+z**2).sqrt()
+        # this will giv eerror - need truncation radius!
+        return 2.*self.sigma2*numpy.log(r)
+    
+    def get_gravity_at_point(self,eps,x,y,z):
+        r = (x**2+y**2+z**2).sqrt()
+        fr = self.radial_force(r)
+        ax = fr*x/r
+        ay = fr*y/r
+        az = fr*z/r
+        return ax, ay, az
+    
+    def radial_force(self,r):
+        return -2*self.sigma2/r
+    
+    def mass_density(self,r):
+        return self.sigma2/(2.*numpy.pi*self.G*r**2)
+    
+    def enclosed_mass(self,r):
+        return 2.*numpy.pi*self.sigma2*r/self.G
+    
+    def circular_velocity(self,r):
+        return self.sigma * 2**.5

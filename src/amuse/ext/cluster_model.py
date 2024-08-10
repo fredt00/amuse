@@ -13,7 +13,7 @@ from amuse.ext.derived_grav_systems import tidal_field
 global xi0
 xi0 = 0.0075 #0.0142 for equal mass, 0.0075 for the paper
 global zeta
-zeta = 0.1#0.1 # reducing this helps match the mass loss profile, but then the half mass radius does not increase enough
+zeta = 0.1 # reducing this helps match the mass loss profile, but then the half mass radius does not increase enough
 # as mu ~epsilon = zeta after nc
 global N1
 N1 = 1000 # 15000 and for equal mass clusters
@@ -36,6 +36,8 @@ global M1
 M1=4
 global nc
 nc =12.5 # 12.5 in paper ... maybe lowerfor us? 5?
+
+
 global tidal_shock_energy_fraction
 tidal_shock_energy_fraction =0.25 # - could be more physically motivated? written in terms of other parameters?
 
@@ -57,16 +59,28 @@ nu = 0.07
 global Y
 Y = 90
 global b
-b=1.25
+b=1.35
 global y 
 y = -0.3
+
 class internal_dynamics(tidal_field):
-    def __init__(self,N,mbar, rhalf, kappa, M_seg, grav_instance, stellar_evolution=False):
+    def __init__(self,N,mbar, half_mass_radius, kappa, M_seg, particles, grav_instance, stellar_evolution=False, VG=None):
+        
+        super().__init__(grav_instance)
+        
+        self.VG = VG
+
+        self.particles = particles
+
+        if not half_mass_radius:
+            # set to RV filling - depends on cluster W0
+            half_mass_radius= self.rtidal()* 0.19
+
         self.N=N
         self.mbar=mbar
         self.mbar_se = mbar
         self.mbar_init = mbar
-        self.rhalf=rhalf
+        self.rhalf=half_mass_radius
         self.kappa=kappa
         self.M_seg=M_seg
         self.m_low = 0.1 | units.MSun
@@ -75,14 +89,27 @@ class internal_dynamics(tidal_field):
         # self.psi=14#8.0#13.5364073081 # this should depend on mass spectrum WITHIN rhalf   - !!!NOTE possibly this should be the case for many parameters including shape parameter and mean mass etc...
         # ok so i think we want mean mass to be for the whole cluster, buy psi should depend only within rhalf... makes it harder to relate to other variables like mbar...
         # perhaps M_seg and or kappa could relate mbar_h to mbar?
-        self.rtidal = 0 | units.pc
-        self.n_trh = 0
         self.n_trhp = 0
         self.stellar_evolution = stellar_evolution
-        super().__init__(grav_instance)
 
         self.model_time = 0. | units.Myr
 
+
+
+    # singular isothermal sphere - used if VG is specified. for comparisson with EMACSS paper
+    def emacss_isothermal_rj(self):
+        MG = 9.53e+10 | units.MSun
+        return pow((self.N*self.mbar)/(2.0*MG),(1.0/3.0))*self.particles.position.lengths()[0]
+
+    def rtidal(self):
+        if self.grav_instance:
+            return self.tidal_radius(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
+                                        self.particles.position[0].z, self.particles.mass[0])
+        elif self.VG:
+            return self.emacss_isothermal_rj()
+        else: 
+            return np.inf | units.pc
+            
     # stellar evolution quantities
     def main_sequence_lifetime(self,mass):
         return main_sequence_lifetime_m_up * (1 + np.log(mass/self.m_max)/np.log(self.m_max/m_up_inf))**a
@@ -99,21 +126,18 @@ class internal_dynamics(tidal_field):
            m_up = self.m_max*pow(self.m_max/m_up_inf,pow(main_sequence_lifetime_m_up/self.model_time,0.37) - 1.0); 
         m_up = np.sqrt(pow(m_up,2)+pow(m_up_inf,2))
         return m_up
-
-    # def mbar_s(self):
-    #     if self.model_time==0 | units.Myr:
-    #         return self.mbar
-    #     return self.mbar_init*(self.model_time/main_sequence_lifetime_m_up)**-nu
         
     def psi(self):
         if self.model_time < main_sequence_lifetime_m_up:
             return psi1
         else:
-            return (psi1-psi0)*(self.model_time/main_sequence_lifetime_m_up)**y + psi0
+            return (psi1-psi0)*(self.model_time/self.main_sequence_lifetime(self.m_max))**y + psi0 # possibly needs to be t_se(t)
+        
     
     # derived quantities
     def relaxation_time(self):
         return 0.138 * np.sqrt(self.N * self.rhalf**3/(constants.G*self.mbar)) /np.log(gamma_c * self.N)
+    
     def relaxation_time_prime(self):
         return self.relaxation_time()/self.psi()
     
@@ -121,14 +145,14 @@ class internal_dynamics(tidal_field):
         return -self.kappa * constants.G*(self.N*self.mbar)**2./self.rhalf
 
     def RhJ(self):
-        return self.rhalf/self.rtidal
+        return self.rhalf/self.rtidal()
 
     def P(self):
         return (self.RhJ()/R1)**z * ((self.N*np.log(gamma_c*1.5e4))/(N1*np.log(gamma_c*self.N)))**(1-0.75)
     
     def F(self):
         F=0.
-        if nc/2<=self.n_trhp <= nc:
+        if nc/2<self.n_trhp <= nc:
             F = 2.*self.n_trhp/nc - 1.
         if self.n_trhp > nc:
             F=1.
@@ -139,7 +163,7 @@ class internal_dynamics(tidal_field):
         return self.xi_i() + self.xi_e()
     def xi_i(self):
         if self.stellar_evolution:
-            return self.f_ind()*self.gamma_se()
+            return -self.f_ind()*self.gamma_se()  # here is an inconsistency in the paper1
         else:
             return 0
     def xi_e(self):
@@ -150,6 +174,7 @@ class internal_dynamics(tidal_field):
     def gamma_dyn(self):
         return (1-self.mesc()/self.mbar)* self.S()*self.U()*self.xi()
     def gamma_se(self):
+
         if self.stellar_evolution and self.model_time>main_sequence_lifetime_m_up:
             return -nu*self.relaxation_time_prime()/self.model_time *self.mbar_se/self.mbar
         else:
@@ -157,7 +182,7 @@ class internal_dynamics(tidal_field):
 
     def lambd(self):
         lambd=0.
-        if self.n_trhp > 0.5*nc:
+        if self.n_trhp >= 0.5*nc:
             lambd += (kappa_1 - self.kappa) * (2*self.n_trhp/nc - 1)
         return lambd
     
@@ -195,7 +220,7 @@ class internal_dynamics(tidal_field):
     def drdt(self):
         return self.mu() * self.rhalf/self.relaxation_time_prime()
     def dmbar_se_dt(self):
-        return -self.gamma_se() * self.mbar/ self.relaxation_time_prime()
+        return self.gamma_se() * self.mbar/ self.relaxation_time_prime()
 
     def dtrhpdt(self):
         # for counting
@@ -210,36 +235,57 @@ class internal_dynamics(tidal_field):
 
     # an array containing all the evolved parameters to let us update them simultaneously 
     def get_nbody(self):
-        return np.array([self.N, self.mbar, self.mbar_se, self.rhalf, self.n_trhp, self.kappa, self.M_seg])
+        return np.array([self.model_time, self.N, self.mbar, self.mbar_se, self.rhalf, self.n_trhp, self.kappa, self.M_seg])
     
     def set_nbody(self, nbody):
-        self.N = nbody[0]
-        self.mbar = nbody[1]
-        self.mbar_se = nbody[2]
-        self.rhalf = nbody[3]
-        self.n_trhp = nbody[4]
-        self.kappa = nbody[5]
-        self.M_seg = nbody[6]
+        self.model_time = nbody[0]
+        self.N = nbody[1]
+        self.mbar = nbody[2]
+        self.mbar_se = nbody[3]
+        self.rhalf = nbody[4]
+        self.n_trhp = nbody[5]
+        self.kappa = nbody[6]
+        self.M_seg = nbody[7]
     
     def rate_array(self):
-        return np.array([self.dNdt(), self.dmbardt(), self.dmbar_se_dt(), self.drdt(), self.dtrhpdt(), self.dkdt(), self.dMsegdt()])
+        return np.array([1.0, self.dNdt(), self.dmbardt(), self.dmbar_se_dt(), self.drdt(), self.dtrhpdt(), self.dkdt(), self.dMsegdt()])
+
 
 ## TO DO
 # - add a unit converter to the class
 class star_cluster_particle(internal_dynamics):
-    def __init__(self, mass, half_mass_radius, position, velocity, grav_instance=None, stellar_evolution=True):
+    def __init__(self, N=None, mass=None, half_mass_radius=None, position=None, velocity=None, grav_instance=None, stellar_evolution=True, VG=None):
+        
+        # this is a funciton of the IMF used
+        mbar = 0.6377 | units.MSun
+        if N:
+            mass = mbar*N
+        else:
+            if mass:
+                N = mass/mbar
+            else:
+                raise ValueError('Either N or mass must be set')
+
         # set initial conditions - has to be particles to function with bridge
-        self.particles = Particles(1)
-        self.particles.mass = mass
-        self.particles.position = position
-        self.particles.velocity = velocity
+        particles = Particles(1)
+        particles.mass = mass
+        particles.position = position
+        particles.velocity = velocity
+
+        # only used if not none
+        self.VG = VG
 
         # set up tidal shock tracking
         self.last_max_evalues = [0,0,0] | units.Gyr**-2
         self.time_of_last_shock = [0,0,0]| units.Myr
         self.eigenvalues = np.empty((0,3)) | units.Gyr**-2
+        # mbar=0.555131467864 | units.MSun
+        # N=18015
 
-        super().__init__(N=18015, mbar=0.555131467864 | units.MSun, rhalf=half_mass_radius, kappa=0.2, M_seg=3, grav_instance=grav_instance, stellar_evolution=stellar_evolution)
+        self.dt = 1 | units.Myr
+        # if tidal field is present
+        super().__init__(N=mass/mbar, mbar = mbar, half_mass_radius=half_mass_radius, kappa=0.2, M_seg=3, particles=particles,
+                            grav_instance=grav_instance, stellar_evolution=stellar_evolution, VG=VG)
 
     def evolve_model(self, tend):
         dt = tend - self.model_time
@@ -254,45 +300,41 @@ class star_cluster_particle(internal_dynamics):
         self.internal_evolution(tend)
 
     def internal_evolution(self, tend):
-        # set tidal radius
-        self.rtidal = self.tidal_radius(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
-                                         self.particles.position[0].z, self.particles.mass[0])
-        
-        # tidal evolution - computes shock mass loss and change of rh
-        self.tidal_shock_evolution(tend)
+        # tidal evolution - computes shock mass loss and change of rh due to this
+        # self.tidal_shock_evolution(tend)
     
-        # relaxation evolution 
+        # relaxation evolution - EMACSS model. updates model time
         self.relaxation_evolution(tend)
 
         self.particles.mass = self.mbar * self.N
-        self.model_time = tend
 
     def tidal_shock_evolution(self, tend):
         dt = tend - self.model_time
-        # here we do the same rk steps for all quantities, then check error with N as this is most important
         # tidal tensor mass loss as position is not updated in this timestep - make this a funtion
         # Construct the tidal tensor
-        eigenvalues = self.tidal_tensor_eigenvalues(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y, self.particles.position[0].z)
+        eigenvalues = self.tidal_tensor_eigenvalues(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
+                                                     self.particles.position[0].z)
+        
         self.eigenvalues=np.append(self.eigenvalues, eigenvalues, axis=0)
-        index=0
+
         # assume shock happens evenly across cluster
+        index=0
         dN=0
         for lam in eigenvalues:
+            # apply the shock for this component if any component drops below 88% of the last maximum and is approximately a minimum
             if np.abs(lam) < 0.88*self.last_max_evalues[index] and np.gradient(np.abs(self.eigenvalues[:,index]))[-1] >= 0:
-                # apply the shock for this component if any component drops below 88% of the last maximum and is approximately a minimum
+                # Weinberg coefficients
                 Awij = (1 + 0.237 * constants.G * self.N*self.mbar/self.rhalf**3 * (self.model_time-self.time_of_last_shock[-1])**2)**(-3/2)
 
                 # we need to integrate Tij dt over the time since the last shock - use scipy.integrate.simpson
-                # check dx here!
-                Itid = np.abs(simpson(self.eigenvalues[int(self.time_of_last_shock[index]/dt):,index], dx=dt.value_in(units.Gyr))/100)**2 * Awij
-                tshock = (self.model_time - self.time_of_last_shock[index]) * 65.6 * (self.particles.mass/(1e4 | units.MSun)) * (self.rhalf/(4 | units.pc))**-3\
-                * (Itid)**-1
+                Itid = np.abs(simpson(self.eigenvalues[int(self.time_of_last_shock[index]/dt):,index],
+                                       dx=dt.value_in(units.Gyr))/100)**2 * Awij
+                tshock = (self.model_time - self.time_of_last_shock[index]) * 65.6 * (self.particles.mass/(1e4 | units.MSun)) * \
+                      (self.rhalf/(4 | units.pc)) ** -3 * Itid ** -1
 
                 dN -= dt*self.N/tshock 
                 self.time_of_last_shock[index]=self.model_time
                 self.last_max_evalues[index] = lam
-            else:
-                self.Itid = 0 
             if np.abs(lam) > self.last_max_evalues[index]:
                 self.last_max_evalues[index] = np.abs(lam)
             index+=1
@@ -303,11 +345,7 @@ class star_cluster_particle(internal_dynamics):
         self.rhalf += dr
 
     def relaxation_evolution(self,tend):
-        internal_time = self.model_time
         tol = 1e-6
-        dt = tend - internal_time
-        # copy of the initial values
-        duplicate_array = self.get_nbody()
         # rk coefficients
         b21=0.2
         b31=3.0/40.0
@@ -333,11 +371,18 @@ class star_cluster_particle(internal_dynamics):
         dc3=c3-18575.0/48384.0
         dc4=c4-13525.0/55296.0
         dc6=c6-0.25
-
-        while internal_time < tend:
+        dt = tend - self.model_time
+        while self.model_time < tend:
+            # copy of the initial values
+            duplicate_array = self.get_nbody()
+            # dt = tend - self.model_time
             while True:
                 # we need to solve each step or rk in parallel for each variable so we can update rates accordingly
                 self.set_nbody(duplicate_array)
+
+                # ensure we don't overshoot the end time
+                dt = min(tend - self.model_time, dt) 
+
                 # first rk step
                 dr1 = self.rate_array()
                 self.set_nbody(duplicate_array + [dt] * (b21 * dr1))
@@ -356,8 +401,10 @@ class star_cluster_particle(internal_dynamics):
                 # sixth rk step
                 dr6 = self.rate_array()
                 self.set_nbody(duplicate_array + [dt] * (c1 * dr1 + c3 * dr3 + c4 * dr4 + c6 * dr6))
-                err = max([dt] * (dc1 * dr1 + dc3 * dr3 + dc4 * dr4 + dc5 * dr5 + dc6 * dr6)/(tol * self.get_nbody()))
 
+                # if (self.model_time+dt > tend): break
+
+                err = max([dt] * (dc1 * dr1 + dc3 * dr3 + dc4 * dr4 + dc5 * dr5 + dc6 * dr6)/(tol * self.get_nbody()))
                 if err <= 1.0: break
                 if dt < 1.01 * self.min_step(): break
                 step_test = 0.9 * dt * (err) ** -0.25
@@ -366,7 +413,9 @@ class star_cluster_particle(internal_dynamics):
                 else:
                     dt = min(step_test, 0.1 * dt)
 
-            internal_time += dt
+            if (dt < self.min_step()): dt = self.min_step()
+            elif (err >  1.89e-4): dt = 0.9*dt*err**-0.2
+            else: dt = 5.0*dt
 
     def get_gravity_at_point(self,radius,x,y,z):
         mass=self.particles.mass[0]
