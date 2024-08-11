@@ -321,9 +321,9 @@ def new_argument_parser():
     result.add_argument("--M_cluster",  dest="M_cluster", type=units.MSun, default = 1e4 | units.MSun,
                       help="mass of the cluster (default: %(default)s)")
     
-    result.add_argument("-X", "--initial_position", dest="initial_velocity", type=float, default = [],
+    result.add_argument("-X", "--initial_position", dest="initial_velocity", type=float, default = [],action="append",
                       help="cluser galactocentric initial position in kpc - specify 3 times for x,y,z. If empty, solar used (default: %(default)s)")     
-    result.add_argument("-V", "--initial_velocity", dest="initial_velocity", type=float, default = [],   
+    result.add_argument("-V", "--initial_velocity", dest="initial_velocity", type=float, default = [], action="append",  
                         help="cluser initial velocity in kms - specify 3 times for x,y,z. If empty, solar used (default: %(default)s)")  
     
     result.add_argument("--Vcirc_fraction", dest="Vcirc_fraction", type=float, default =None,
