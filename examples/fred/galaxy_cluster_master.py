@@ -14,13 +14,27 @@ import amuse.ext.galactic_potentials as galactic_potentials
 import inspect
 import argparse
 from amuse.ext.cluster_model import star_cluster_particle
+import pynbody
+
+def pre_evolve_galaxy(galaxy, converter, t_settle, eps_gal_to_clu):
+    print('evolving galaxy IC to', t_settle.in_(units.Gyr), 'to allow it to settle')
+    gravity_gal = Fi(converter,mode='openmp',redirection='file',redirect_file='output_fi.txt')
+    gravity_gal.parameters.epsilon_squared=galaxy.converter.to_nbody(eps_gal_to_clu**2)
+    gravity_gal.parameters.use_hydro_flag=False
+    gravity_gal.particles.add_particles(galaxy)
+    channel_to_galaxy = gravity_gal.particles.new_channel_to(galaxy)
+    gravity_gal.evolve_model(t_settle)
+    channel_to_galaxy.copy()
+    gravity_gal.stop()
+    # recenter
+    galaxy.move_to_center()
+    return galaxy
 
 def setup_live_galaxy(Nh=1e5, Mh=1e10 | units.MSun,Rscale=4.1 | units.kpc, t_settle=0|units.Myr, dt=1 | units.Myr, epsilon=88.6 | units.pc):
     converter= nbody_system.nbody_to_si(Mh, Rscale)
     # halo
     galaxy = new_halogen_model(Nh, converter, alpha=1, beta=3, gamma=1, 
                             scale_radius=Rscale, cutoff_radius=10.*Rscale)
-    
     galaxy.move_to_center()
     # try fastkick for faster potential computation
     scaler = FastKick(converter, number_of_workers=20)
@@ -31,17 +45,34 @@ def setup_live_galaxy(Nh=1e5, Mh=1e10 | units.MSun,Rscale=4.1 | units.kpc, t_set
     galaxy.velocity*=(-2.*galaxy.kinetic_energy()/potential_energy)**-.5
     converter_gadget=nbody_system.nbody_to_si(dt, Mh)
     if t_settle>0|units.Myr:
-        print('evolving galaxy IC to', t_settle.in_(units.Gyr), 'to allow it to settle')
-        gravity_gal = Fi(converter_gadget,mode='openmp',redirection='file',redirect_file='output_fi.txt')
-        gravity_gal.parameters.epsilon_squared=converter_gadget.to_nbody(epsilon**2)
-        gravity_gal.parameters.use_hydro_flag=False
-        gravity_gal.particles.add_particles(galaxy)
-        channel_to_galaxy = gravity_gal.particles.new_channel_to(galaxy)
-        gravity_gal.evolve_model(t_settle)
-        channel_to_galaxy.copy()
-        gravity_gal.stop()
-        # recenter
-        galaxy.move_to_center()
+        galaxy = pre_evolve_galaxy(galaxy, converter_gadget, t_settle, epsilon)
+    return galaxy
+
+def setup_dice_galaxy(galaxy_file, tsettle, epsilon):
+    filename = galaxy_file
+    print('reading in galaxy IC from ' + filename)
+    ds = pynbody.load('/mnt/zfsusers/fthompson/soft/dice/example/dice_halo_conc_set.g2')
+
+    # transfer data to amuse
+    halo = Particles(len(ds.dm))
+    halo.position=ds.dm['pos']  | units.kpc
+    halo.velocity=ds.dm['vel'] | units.kms
+    halo.mass = ds.dm['mass']*10**10 | units.MSun 
+
+    stars = Particles(len(ds.star))
+    stars.position=ds.star['pos']  | units.kpc
+    stars.velocity=ds.star['vel'] | units.kms
+    stars.mass = ds.star['mass']*10**10 | units.MSun
+
+    galaxy = Particles()
+    galaxy.add_particles(halo)
+    galaxy.add_particles(stars)
+
+    # pre evolve the galaxy
+    if tsettle>0|units.Myr:
+        converter = nbody_system.nbody_to_si(galaxy.mass.sum(), 1 | units.Myr)
+        galaxy = pre_evolve_galaxy(galaxy, converter, tsettle, epsilon)
+
     return galaxy
 
 def convert_inputs_to_galactic_potential(potential_option, potential_parameters, potential_units):
@@ -73,13 +104,16 @@ def read_hdf_and_get_requested_snapshot(filename, restart_time):
     return particles
 
 def configure_galaxy(N_halo, Mh, Rh, t_settle, galaxy_file, potential_option, potential_parameters, potential_units, analytic, restart_time,
-                      dt,eps_gal_to_clu, galaxy_force_number_of_workers):
+                      dt,eps_gal_to_clu, galaxy_force_number_of_workers, galaxy_file_type):
     if analytic:
         galaxy = convert_inputs_to_galactic_potential(potential_option, potential_parameters, potential_units)
         gravity_from_galaxy = None
     else:
         if galaxy_file:
-            galaxy_particles = read_hdf_and_get_requested_snapshot(galaxy_file, restart_time)
+            if galaxy_file_type=='dice':
+                galaxy = setup_dice_galaxy(galaxy_file, t_settle, eps_gal_to_clu)
+            else:
+                galaxy_particles = read_hdf_and_get_requested_snapshot(galaxy_file, restart_time)
         else:
             galaxy_particles = setup_live_galaxy(Nh=N_halo, Mh=Mh, Rscale=Rh,t_settle=t_settle, dt=dt, epsilon=eps_gal_to_clu)
         galaxy_converter = nbody_system.nbody_to_si(galaxy_particles.mass.sum(), dt)
@@ -161,7 +195,7 @@ def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_positio
 def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0, N_halo = 10000, N_cluster = None, W0=5.0, r_half = None, r_tidal = None,
             M_cluster = None, t_end = 10 | units.Myr, restart_file=None, Mh=100|units.MSun, Rh=4.43 | units.kpc,
             output_interval=20 | units.Myr, t_settle = 1 | units.Gyr, initial_position = [], initial_velocity = [], Vcirc_fraction = None,
-            eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None, cluster_model = False, cluster_file = None,
+            eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None, galaxy_file_type = "hdf5",cluster_model = False, cluster_file = None,
             cluster_file_type='hdf5', restart_time = 0 | units.Myr, df_model=False, analytic=False, 
             stellar_evolution=False, potential_option='MWpotentialBovy2015', potential_parameters = [], potential_units = []):
     # check input options
@@ -175,7 +209,7 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
             galaxy_file = "galaxy_"+restart_file
     # set up galaxy IC/potential
     galaxy, gravity_from_galaxy = configure_galaxy(N_halo, Mh, Rh, t_settle, galaxy_file, potential_option, potential_parameters,
-                                                    potential_units, analytic, restart_time, dt,eps_gal_to_clu, galaxy_force_number_of_workers)
+                                                    potential_units, analytic, restart_time, dt,eps_gal_to_clu, galaxy_force_number_of_workers, galaxy_file_type)
     
     # set up the cluster - new IC or read in
     cluster, Rinit, Vinit = configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_position, initial_velocity, Vcirc_fraction, cluster_model,
@@ -287,6 +321,8 @@ def new_argument_parser():
                       help="The time for which the galaxy initial condition is first simulated to allow it to relax (default: %(default)s)")
     result.add_argument("-g","--galaxy_file", dest="galaxy_file", default = None,
                       help="A file to read in Nbody initial condition for the galaxy (default: %(default)s)")
+    result.add_argument("--galaxy_file_type", dest="galaxy_file_type", default = 'hdf5', choices=['hdf5', "dice"],
+                      help="Type of file to read in galaxy condition (default: %(default)s)")
     
     # in case of analytic
     result.add_argument("--potential_option", dest='potential_option', choices= [x for x in dir(galactic_potentials) if inspect.isclass(getattr(galactic_potentials, x))][2:], 
@@ -321,7 +357,7 @@ def new_argument_parser():
     result.add_argument("--M_cluster",  dest="M_cluster", type=units.MSun, default = 1e4 | units.MSun,
                       help="mass of the cluster (default: %(default)s)")
     
-    result.add_argument("-X", "--initial_position", dest="initial_velocity", type=float, default = [],action="append",
+    result.add_argument("-X", "--initial_position", dest="initial_position", type=float, default = [],action="append",
                       help="cluser galactocentric initial position in kpc - specify 3 times for x,y,z. If empty, solar used (default: %(default)s)")     
     result.add_argument("-V", "--initial_velocity", dest="initial_velocity", type=float, default = [], action="append",  
                         help="cluser initial velocity in kms - specify 3 times for x,y,z. If empty, solar used (default: %(default)s)")  
