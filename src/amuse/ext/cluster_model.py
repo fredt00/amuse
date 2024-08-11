@@ -98,8 +98,9 @@ class internal_dynamics(tidal_field):
 
     # singular isothermal sphere - used if VG is specified. for comparisson with EMACSS paper
     def emacss_isothermal_rj(self):
-        MG = 9.53e+10 | units.MSun
-        return pow((self.N*self.mbar)/(2.0*MG),(1.0/3.0))*self.particles.position.lengths()[0]
+        RG= self.particles.position.lengths()[0]
+        MG = RG*self.VG**2/constants.G#9.53e+10 | units.MSun
+        return pow((self.N*self.mbar)/(2.0*MG),(1.0/3.0))*RG
 
     def rtidal(self):
         if self.grav_instance:
@@ -147,8 +148,9 @@ class internal_dynamics(tidal_field):
     def RhJ(self):
         return self.rhalf/self.rtidal()
 
+    # note! here they use rv/rj not rh/rj!! and rv=rh/4kappa
     def P(self):
-        return (self.RhJ()/R1)**z * ((self.N*np.log(gamma_c*1.5e4))/(N1*np.log(gamma_c*self.N)))**(1-0.75)
+        return (self.RhJ()/(R1*4*self.kappa))**z * ((self.N*np.log(gamma_c*N1))/(N1*np.log(gamma_c*self.N)))**(1-0.75)
     
     def F(self):
         F=0.
@@ -163,37 +165,44 @@ class internal_dynamics(tidal_field):
         return self.xi_i() + self.xi_e()
     def xi_i(self):
         if self.stellar_evolution:
-            return -self.f_ind()*self.gamma_se()  # here is an inconsistency in the paper1
+            return self.f_ind()*self.gamma_se()  # here is an inconsistency in the paper1
         else:
             return 0
     def xi_e(self):
-        return self.F()*xi0 * (1-self.P()) + (f + (1-f)*self.F())*3/5 *zeta*self.P()
+        return self.F() * xi0 * (1 - self.P()) + (f + (1 - f) * self.F()) * 3/5 * zeta * self.P()
     
     def gamma(self):
-        return self.gamma_dyn() + self.gamma_se()
+        return self.gamma_dyn() - self.gamma_se()
+    
     def gamma_dyn(self):
-        return (1-self.mesc()/self.mbar)* self.S()*self.U()*self.xi()
+        return (1 - self.mesc()/self.mbar) * self.S() * self.U() * self.xi()
+    
+    # note sign change compared to paper
     def gamma_se(self):
-
         if self.stellar_evolution and self.model_time>main_sequence_lifetime_m_up:
-            return -nu*self.relaxation_time_prime()/self.model_time *self.mbar_se/self.mbar
+            return nu * self.relaxation_time_prime()/self.model_time * self.mbar_se/self.mbar
         else:
             return 0.
 
     def lambd(self):
         lambd=0.
-        if self.n_trhp >= 0.5*nc:
+        if self.n_trhp > 0.5*nc:
             lambd += (kappa_1 - self.kappa) * (2*self.n_trhp/nc - 1)
         return lambd
     
     def epsilon(self):
-        epsilon=zeta
-        if self.n_trhp <= nc:
-            epsilon = 1./self.kappa * self.mesc()/self.mbar * self.RhJ() * self.xi()
-            if self.model_time>main_sequence_lifetime_m_up:
-                epsilon += self.M_seg*self.gamma_se()
+        epsilon=0.
+        if self.n_trhp > nc:
+            epsilon=zeta
+        elif self.model_time > main_sequence_lifetime_m_up:
+            epsilon = self.M_seg*self.gamma_se() + self.tidal_escape()
+        else:
+            epsilon = self.tidal_escape()
         return epsilon
     
+    def tidal_escape(self):
+        return self.RhJ()/self.kappa * self.xi() * self.mesc()/self.mbar
+
     def mu(self):
         return self.epsilon() - 2 * self.xi() + 2 * self.gamma() + self.lambd()
     
@@ -210,7 +219,7 @@ class internal_dynamics(tidal_field):
 
     # derived rates divided by variable (so log rate)
     def dNdt(self):
-        return - self.xi() * self.N/self.relaxation_time_prime()
+        return -self.xi() * self.N/self.relaxation_time_prime()
     def dmbardt(self):
         return self.gamma() * self.mbar/ self.relaxation_time_prime()
     def dMsegdt(self):
@@ -220,7 +229,7 @@ class internal_dynamics(tidal_field):
     def drdt(self):
         return self.mu() * self.rhalf/self.relaxation_time_prime()
     def dmbar_se_dt(self):
-        return self.gamma_se() * self.mbar/ self.relaxation_time_prime()
+        return -self.gamma_se() * self.mbar/ self.relaxation_time_prime()
 
     def dtrhpdt(self):
         # for counting
@@ -282,7 +291,10 @@ class star_cluster_particle(internal_dynamics):
         # mbar=0.555131467864 | units.MSun
         # N=18015
 
-        self.dt = 1 | units.Myr
+        # storing dt probably good for stability so we don't have big jumps in it
+        self.dt = 0.001 | units.Myr
+
+
         # if tidal field is present
         super().__init__(N=mass/mbar, mbar = mbar, half_mass_radius=half_mass_radius, kappa=0.2, M_seg=3, particles=particles,
                             grav_instance=grav_instance, stellar_evolution=stellar_evolution, VG=VG)
@@ -371,7 +383,7 @@ class star_cluster_particle(internal_dynamics):
         dc3=c3-18575.0/48384.0
         dc4=c4-13525.0/55296.0
         dc6=c6-0.25
-        dt = tend - self.model_time
+        # self.dt = tend - self.model_time
         while self.model_time < tend:
             # copy of the initial values
             duplicate_array = self.get_nbody()
@@ -381,41 +393,41 @@ class star_cluster_particle(internal_dynamics):
                 self.set_nbody(duplicate_array)
 
                 # ensure we don't overshoot the end time
-                dt = min(tend - self.model_time, dt) 
+                self.dt = min(tend - self.model_time, self.dt) 
 
                 # first rk step
                 dr1 = self.rate_array()
-                self.set_nbody(duplicate_array + [dt] * (b21 * dr1))
+                self.set_nbody(duplicate_array + [self.dt] * (b21 * dr1))
                 # second rk step
                 dr2 = self.rate_array()
-                self.set_nbody(duplicate_array + [dt] * (b31 * dr1 + b32 * dr2))
+                self.set_nbody(duplicate_array + [self.dt] * (b31 * dr1 + b32 * dr2))
                 # third rk step
                 dr3 = self.rate_array() 
-                self.set_nbody(duplicate_array + [dt] * (b41 * dr1 + b42 * dr2 + b43 * dr3))
+                self.set_nbody(duplicate_array + [self.dt] * (b41 * dr1 + b42 * dr2 + b43 * dr3))
                 # fourth rk step
                 dr4 = self.rate_array()
-                self.set_nbody(duplicate_array + [dt] * (b51 * dr1 + b52 * dr2 + b53 * dr3 + b54 * dr4))
+                self.set_nbody(duplicate_array + [self.dt] * (b51 * dr1 + b52 * dr2 + b53 * dr3 + b54 * dr4))
                 # fifth rk step
                 dr5 = self.rate_array()
-                self.set_nbody(duplicate_array + [dt] * (b61 * dr1 + b62 * dr2 + b63 * dr3 + b64 * dr4 + b65 * dr5))
+                self.set_nbody(duplicate_array + [self.dt] * (b61 * dr1 + b62 * dr2 + b63 * dr3 + b64 * dr4 + b65 * dr5))
                 # sixth rk step
                 dr6 = self.rate_array()
-                self.set_nbody(duplicate_array + [dt] * (c1 * dr1 + c3 * dr3 + c4 * dr4 + c6 * dr6))
+                self.set_nbody(duplicate_array + [self.dt] * (c1 * dr1 + c3 * dr3 + c4 * dr4 + c6 * dr6))
 
                 # if (self.model_time+dt > tend): break
 
-                err = max([dt] * (dc1 * dr1 + dc3 * dr3 + dc4 * dr4 + dc5 * dr5 + dc6 * dr6)/(tol * self.get_nbody()))
+                err = max([self.dt] * (dc1 * dr1 + dc3 * dr3 + dc4 * dr4 + dc5 * dr5 + dc6 * dr6)/(tol * self.get_nbody()))
                 if err <= 1.0: break
-                if dt < 1.01 * self.min_step(): break
-                step_test = 0.9 * dt * (err) ** -0.25
-                if dt >= (0.0 | units.Myr):
-                    dt = max(step_test, 0.1 * dt)
+                if self.dt < 1.01 * self.min_step(): break
+                step_test = 0.9 * self.dt * (err) ** -0.25
+                if self.dt >= (0.0 | units.Myr):
+                    self.dt = max(step_test, 0.1 * self.dt)
                 else:
-                    dt = min(step_test, 0.1 * dt)
+                    self.dt = min(step_test, 0.1 * self.dt)
 
-            if (dt < self.min_step()): dt = self.min_step()
-            elif (err >  1.89e-4): dt = 0.9*dt*err**-0.2
-            else: dt = 5.0*dt
+            if (self.dt < self.min_step()): self.dt = self.min_step()
+            elif (err >  1.89e-4): self.dt = 0.9*self.dt*err**-0.2
+            else: self.dt = 5.0*self.dt
 
     def get_gravity_at_point(self,radius,x,y,z):
         mass=self.particles.mass[0]

@@ -235,7 +235,7 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
         print('evolved to', integrator.time.in_(units.Myr)) 
         # save output
         if integrator.time.value_in(units.Myr) % output_interval.value_in(units.Myr)==0:
-            cluster.transfer_unbound_particles()
+            # cluster.transfer_unbound_particles()
             if not analytic:
                 print('cluster distance from galactic centre', (cluster.bound.particles.center_of_mass()- galaxy.particles.center_of_mass()).length().in_(units.kpc))
             else:

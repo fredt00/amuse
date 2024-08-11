@@ -162,10 +162,13 @@ class star_cluster(tidal_field):
         self.unbound.model_time = time
 
         # if restarting, add the particles to respective codes
-        if particles==None:
+        if particles:
+            self.particles = particles
+        else:
         # create a scale free king model,then scale it to the desired mass and tidal/half mass radius scaling velocities accordingly
-            particles = self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
-        self.particles=particles
+            cluster = self.initialize_king_model(n_particles, M_cluster, W0, r_tidal, r_half)
+            self.particles = Particles()
+            self.particles.add_particles(cluster)
         if time==0 | units.Myr:
             # define a particle attribute to keeping track of escaping stars. if this is true in prev timestep, we remove
             # the particle if it is still unbound in the one being considered - hopefully remove some shot noise in removal
@@ -174,7 +177,7 @@ class star_cluster(tidal_field):
             self.particles.unbound_time = -1 | units.Myr
         
 
-        self.bound.particles.add_particles(self.particles[self.particles.unbound_time<0 | units.Myr])
+        self.bound.particles.add_particles(self.particles[particles.unbound_time<0 | units.Myr])
         self.unbound.particles.add_particles(self.particles.difference(self.bound.particles))
         self.center_of_mass=center_of_mass(self.bound.particles)
   
@@ -198,7 +201,7 @@ class star_cluster(tidal_field):
             self.stellar_evolution.particles.add_particles(self.particles)
             # note - it is important that all required restart attributes are copied to the framework particles from SE
             self.s2f = self.stellar_evolution.particles.new_channel_to(self.particles)#, attributes=['mass', 'radius'])
-            self.f2s = self.particles.new_channel_to(self.stellar_evolution.particles, attributes=['mass', 'radius'])
+            self.f2s = self.particles.new_channel_to(self.stellar_evolution.particles, attributes=["mass", "radius", "x", "y", "z", "vx", "vy", "vz"])
             self.s2f.copy()
 
     def new_code_to_calculate_gravity(self): 
@@ -227,60 +230,77 @@ class star_cluster(tidal_field):
     # evolve the bound particles
     def evolve_model(self,tend):
         if self.stellar_evolution:
+            dt = tend - self.bound.model_time
+
+            self.f2s.copy()
+            self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
+            self.s2f.copy()
+
+            self.f2b.copy()
+            self.bound.evolve_model(tend)
+            self.b2f.copy()
+
+            self.f2s.copy()
+            self.stellar_evolution.evolve_model(self.bound.model_time)
+            self.s2f.copy()
+
+            # Below is for a variable timestep - does not sees necessaty
+
             # here we need to stay in int (the exponent of 0.5) until calls to dynamics and SE to avoid floating point errors
             # also it seems petar can't handle dt_soft below a certain value for a given system - perhaps when we approach similar timesteps
             # to the hermite scheme or binary periods? or it could just be rounding errors from all the conversions going on
             # either way we will set the minimum timestep to 0.5**15 for now (this does depend on the converter used though)
-            maximum_n_allowed = 17
-            initial_n_for_dt_soft = math.ceil(math.log(self.converter.to_nbody(self.bound.parameters.dt_soft).number, 0.5))
-            maximum_n_for_dt_soft = initial_n_for_dt_soft
-            dt = self.stellar_evolution.particles.time_step.min()
-            # change this to evolve stellar evolution until mass has changed by 1-10% or we reach the bridge time step
-            while dt<(tend-self.bound.model_time):
-                dt_se_nbody = self.converter.to_nbody(dt).number
-                n_min_se_time_step = math.ceil(math.log(dt_se_nbody, 0.5))
-                if n_min_se_time_step > maximum_n_allowed:
-                    n_min_se_time_step = maximum_n_allowed
-                dt = self.converter.to_si(0.5**n_min_se_time_step | nbody_system.time)
-                self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
-                self.s2f.copy()
+            # maximum_n_allowed = 17
+            # initial_n_for_dt_soft = math.ceil(math.log(self.converter.to_nbody(self.bound.parameters.dt_soft).number, 0.5))
+            # maximum_n_for_dt_soft = initial_n_for_dt_soft
+            # dt = self.stellar_evolution.particles.time_step.min()
+            # # change this to evolve stellar evolution until mass has changed by 1-10% or we reach the bridge time step
+            # while dt<(tend-self.bound.model_time):
+            #     dt_se_nbody = self.converter.to_nbody(dt).number
+            #     n_min_se_time_step = math.ceil(math.log(dt_se_nbody, 0.5))
+            #     if n_min_se_time_step > maximum_n_allowed:
+            #         n_min_se_time_step = maximum_n_allowed
+            #     dt = self.converter.to_si(0.5**n_min_se_time_step | nbody_system.time)
+            #     self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
+            #     self.s2f.copy()
                 
 
-                # may need to adjust dt_soft in petar to capture this timescale - stay in integer exponent!
-                if n_min_se_time_step > initial_n_for_dt_soft:
-                    self.bound.parameters.dt_soft=dt # petar can take nbody or SI units
-                    maximum_n_for_dt_soft = max(n_min_se_time_step, maximum_n_for_dt_soft)
-                    current_n_for_dt_soft = n_min_se_time_step
-                else:
-                    self.bound.parameters.dt_soft=0.5**initial_n_for_dt_soft | nbody_system.time
+            #     # may need to adjust dt_soft in petar to capture this timescale - stay in integer exponent!
+            #     if n_min_se_time_step > initial_n_for_dt_soft:
+            #         self.bound.parameters.dt_soft=dt # petar can take nbody or SI units
+            #         maximum_n_for_dt_soft = max(n_min_se_time_step, maximum_n_for_dt_soft)
+            #         current_n_for_dt_soft = n_min_se_time_step
+            #     else:
+            #         self.bound.parameters.dt_soft=0.5**initial_n_for_dt_soft | nbody_system.time
 
-                self.f2b.copy()
-                self.bound.evolve_model(self.bound.model_time+dt)
-                self.b2f.copy()
+            #     self.f2b.copy()
+            #     self.bound.evolve_model(self.bound.model_time+dt)
+            #     self.b2f.copy()
 
-                self.stellar_evolution.evolve_model(self.bound.model_time)
-                self.s2f.copy()
+            #     self.stellar_evolution.evolve_model(self.bound.model_time)
+            #     self.s2f.copy()
 
-                dt = self.stellar_evolution.particles.time_step.min()
+            #     dt = self.stellar_evolution.particles.time_step.min()
 
-            remaining_time = tend-self.bound.model_time
-            self.stellar_evolution.evolve_model(self.bound.model_time+remaining_time/2)
-            self.s2f.copy()
+            # remaining_time = tend-self.bound.model_time
+            # self.stellar_evolution.evolve_model(self.bound.model_time+remaining_time/2)
+            # self.s2f.copy()
    
-            self.bound.parameters.dt_soft = self.converter.to_si(0.5**maximum_n_for_dt_soft | nbody_system.time)
-            self.f2b.copy()
-            self.bound.evolve_model(self.bound.model_time+remaining_time)
-            self.b2f.copy()
+            # self.bound.parameters.dt_soft = self.converter.to_si(0.5**maximum_n_for_dt_soft | nbody_system.time)
+            # self.f2b.copy()
+            # self.bound.evolve_model(self.bound.model_time+remaining_time)
+            # self.b2f.copy()
 
-            self.bound.parameters.dt_soft=0 | units.Myr
-            self.bound.evolve_model(self.bound.model_time)
-            self.stellar_evolution.evolve_model(tend)
-            self.s2f.copy()
+            # self.bound.parameters.dt_soft=0 | units.Myr
+            # self.bound.evolve_model(self.bound.model_time)
+            # self.stellar_evolution.evolve_model(tend)
+            # self.s2f.copy()
         else:
-            # copying required in case bridge kicking happened
+
             self.f2b.copy()
             self.bound.evolve_model(tend)
             self.b2f.copy()
+
         self.f2u.copy()
         self.unbound._evolve_model(tend) # update the unbound particles - this should work ok in bridge because evolves happen after kicking
         self.u2f.copy()
