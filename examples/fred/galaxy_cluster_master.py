@@ -23,7 +23,7 @@ def setup_live_galaxy(Nh=1e5, Mh=1e10 | units.MSun,Rscale=4.1 | units.kpc, t_set
     
     galaxy.move_to_center()
     # try fastkick for faster potential computation
-    scaler = FastKick(converter, number_of_workers=8)
+    scaler = FastKick(converter, number_of_workers=20)
     scaler.epsilon_squared = converter.to_nbody(epsilon**2)
     scaler.particles.add_particles(galaxy)
     potential_energy = scaler.get_potential_energy()
@@ -81,7 +81,7 @@ def configure_galaxy(N_halo, Mh, Rh, t_settle, galaxy_file, potential_option, po
         if galaxy_file:
             galaxy_particles = read_hdf_and_get_requested_snapshot(galaxy_file, restart_time)
         else:
-            galaxy_particles = setup_live_galaxy(Nh=N_halo, Mh=Mh, Rscale=Rh,t_settle=t_settle, dt=dt)
+            galaxy_particles = setup_live_galaxy(Nh=N_halo, Mh=Mh, Rscale=Rh,t_settle=t_settle, dt=dt, epsilon=eps_gal_to_clu)
         galaxy_converter = nbody_system.nbody_to_si(galaxy_particles.mass.sum(), dt)
  
         # set up code for evolution of galaxy - set OMP_NUM_THREADS to number of cores for this to use
@@ -218,10 +218,11 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
         integrator.add_code(unbound_system)
         integrator.add_code(galaxy)
     else:
-        system=bridge.GravityCodeInField(cluster, (galaxy,), do_sync=True, verbose=True,
-                    radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
-        unbound_system=bridge.GravityCodeInField(cluster.unbound, (galaxy,cluster,), do_sync=True, verbose=True,
-                    radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
+        # for now use the softening internal to fi code
+        system=bridge.GravityCodeInField(cluster, (galaxy,), do_sync=True, verbose=True)#,
+                    #radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
+        unbound_system=bridge.GravityCodeInField(cluster.unbound, (galaxy,cluster,), do_sync=True, verbose=True)#,
+                    # radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
         integrator.add_code(system)
         integrator.add_code(unbound_system)
         system_cluster=bridge.GravityCodeInField(galaxy, (cluster,), do_sync=True, verbose=True,
@@ -276,13 +277,13 @@ def new_argument_parser():
                         help="number of workers for direct sum code calculating force from galaxy. if zero then uses Fi tree code (default: %(default)s)")
     
     ###### GALAXY OPTIONS
-    result.add_argument("-N", "--halo_particle_number", dest="N_halo", type=int, default = 1e6,
+    result.add_argument("-N", "--halo_particle_number", dest="N_halo", type=int, default = 1e5,
                       help="number of stars in the galaxy dark matter halo (default: %(default)s)")
     result.add_argument("-M", "--halo_mass", dest="Mh", type=units.MSun, default = 1e10 | units.MSun,
                       help="galaxy halo mass (default: %(default)s)")
     result.add_argument("-R", '--halo_scale_radius', dest="Rh", type= units.kpc, default = 4.1 | units.kpc,
                       help="galaxy dark matter halo scale radius (default: %(default)s)")
-    result.add_argument("-T","--Tsettle", dest="t_settle", type=units.Myr, default = 2000 | units.Myr,
+    result.add_argument("-T","--Tsettle", dest="t_settle", type=units.Myr, default = 500 | units.Myr,
                       help="The time for which the galaxy initial condition is first simulated to allow it to relax (default: %(default)s)")
     result.add_argument("-g","--galaxy_file", dest="galaxy_file", default = None,
                       help="A file to read in Nbody initial condition for the galaxy (default: %(default)s)")
@@ -328,7 +329,7 @@ def new_argument_parser():
     result.add_argument("--Vcirc_fraction", dest="Vcirc_fraction", type=float, default =None,
                       help="Fraction of circular velocity for initial cluster velocity - overides initial_velocity (default: %(default)s)")  
     
-    result.add_argument("-e", "--epsilon", dest="eps_gal_to_clu", type=units.parsec, default = 88.6 |units.pc,
+    result.add_argument("-e", "--epsilon", dest="eps_gal_to_clu", type=units.parsec, default = 100 |units.pc,
                       help="softening length used for velocity kicks from galaxy to cluster (default: %(default)s)") 
     
     return result
