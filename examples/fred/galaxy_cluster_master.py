@@ -197,7 +197,7 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
         # store initial conditions
         io.write_set_to_file(cluster.particles,'cluster_'+restart_file,'hdf5', timestamp=restart_time, append_to_file=False)
         if not analytic:
-            io.write_set_to_file(galaxy,'galaxy_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
+            io.write_set_to_file(galaxy.particles,'galaxy_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
 
     # add them to bridge in correct configuration
     integrator=bridge.Bridge(verbose=True, timestep=dt, use_threading=True)
