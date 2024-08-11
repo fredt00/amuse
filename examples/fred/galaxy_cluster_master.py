@@ -88,7 +88,7 @@ def configure_galaxy(N_halo, Mh, Rh, t_settle, galaxy_file, potential_option, po
         galaxy = Fi(galaxy_converter,mode='openmp',redirection='file',redirect_file='output_fi.txt')
         galaxy.parameters.epsilon_squared=galaxy_converter.to_nbody(eps_gal_to_clu**2)
         galaxy.parameters.use_hydro_flag=False
-        galaxy.particles.add_particles(galaxy)
+        galaxy.particles.add_particles(galaxy_particles)
 
         # in case we want to use a different softening from galaxy to cluster to the internal galaxy softening
         # set up direct sum gravity calculator for kicking cluster
