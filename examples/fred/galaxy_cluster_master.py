@@ -131,8 +131,8 @@ def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_positio
         if analytic:
             Vcirc = galaxy.circular_velocity(Rinit.length())
         else:
-            selection = (galaxy.position).lengths()<Rinit.length()
-            Menc=galaxy[selection].mass.sum()
+            selection = (galaxy.particles.position).lengths()<Rinit.length()
+            Menc=galaxy.particles[selection].mass.sum()
             Vcirc  =(constants.G * Menc/Rinit.length())**.5
         Vy = Vcirc_fraction * Vcirc
         Vinit = [0, Vy.value_in(units.kms), 0] | units.kms
