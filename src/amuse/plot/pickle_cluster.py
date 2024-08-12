@@ -94,7 +94,7 @@ def model_cluster(filename, data):
 
 
 def main(filename, cluster_file_type, outfile):
-    print("reading in " + filename + " of type " + file_type + " and outputting to " + outfile)
+    print("reading in " + filename + " of type " + cluster_file_type + " and outputting to " + outfile)
     data = {}
     data['time'] = [] | units.Myr
     data['galactocentric_radius'] = [] | units.kpc
