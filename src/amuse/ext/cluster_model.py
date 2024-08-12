@@ -29,7 +29,7 @@ global kapppa
 kappa_1=0.24 # ours seems to go to 0.9?
 # chi between 0 and 1, depends on mass of escaping stars either mlow or mbar
 global Chi
-Chi= 0.55#0.35+(1-0.35)*(self.rhalf/rtidal)**1.1#0.3#0.55 in paper, we find for circular orbit we have to set 0.45
+Chi= 0.55#0.35+(1-0.35)*(self.half_mass_radius/rtidal)**1.1#0.3#0.55 in paper, we find for circular orbit we have to set 0.45
 global q
 q=2 # doesn't seem very sensitive to this
 global M1
@@ -80,14 +80,14 @@ class internal_dynamics(tidal_field):
         self.mbar=mbar
         self.mbar_se = mbar
         self.mbar_init = mbar
-        self.rhalf=half_mass_radius
+        self.half_mass_radius=half_mass_radius
         self.kappa=kappa
         self.M_seg=M_seg
         self.m_low = 0.1 | units.MSun
         # self.m_up = 100 | units.MSun
         self.m_max = 100 | units.MSun
-        # self.psi=14#8.0#13.5364073081 # this should depend on mass spectrum WITHIN rhalf   - !!!NOTE possibly this should be the case for many parameters including shape parameter and mean mass etc...
-        # ok so i think we want mean mass to be for the whole cluster, buy psi should depend only within rhalf... makes it harder to relate to other variables like mbar...
+        # self.psi=14#8.0#13.5364073081 # this should depend on mass spectrum WITHIN half_mass_radius   - !!!NOTE possibly this should be the case for many parameters including shape parameter and mean mass etc...
+        # ok so i think we want mean mass to be for the whole cluster, buy psi should depend only within half_mass_radius... makes it harder to relate to other variables like mbar...
         # perhaps M_seg and or kappa could relate mbar_h to mbar?
         self.n_trhp = 0
         self.stellar_evolution = stellar_evolution
@@ -137,16 +137,16 @@ class internal_dynamics(tidal_field):
     
     # derived quantities
     def relaxation_time(self):
-        return 0.138 * np.sqrt(self.N * self.rhalf**3/(constants.G*self.mbar)) /np.log(gamma_c * self.N)
+        return 0.138 * np.sqrt(self.N * self.half_mass_radius**3/(constants.G*self.mbar)) /np.log(gamma_c * self.N)
     
     def relaxation_time_prime(self):
         return self.relaxation_time()/self.psi()
     
     def total_energy(self):
-        return -self.kappa * constants.G*(self.N*self.mbar)**2./self.rhalf
+        return -self.kappa * constants.G*(self.N*self.mbar)**2./self.half_mass_radius
 
     def RhJ(self):
-        return self.rhalf/self.rtidal()
+        return self.half_mass_radius/self.rtidal()
 
     # note! here they use rv/rj not rh/rj!! and rv=rh/4kappa
     def P(self):
@@ -227,7 +227,7 @@ class internal_dynamics(tidal_field):
     def dkdt(self):
         return self.lambd() * self.kappa/ self.relaxation_time_prime()
     def drdt(self):
-        return self.mu() * self.rhalf/self.relaxation_time_prime()
+        return self.mu() * self.half_mass_radius/self.relaxation_time_prime()
     def dmbar_se_dt(self):
         return -self.gamma_se() * self.mbar/ self.relaxation_time_prime()
 
@@ -244,14 +244,14 @@ class internal_dynamics(tidal_field):
 
     # an array containing all the evolved parameters to let us update them simultaneously 
     def get_nbody(self):
-        return np.array([self.model_time, self.N, self.mbar, self.mbar_se, self.rhalf, self.n_trhp, self.kappa, self.M_seg])
+        return np.array([self.model_time, self.N, self.mbar, self.mbar_se, self.half_mass_radius, self.n_trhp, self.kappa, self.M_seg])
     
     def set_nbody(self, nbody):
         self.model_time = nbody[0]
         self.N = nbody[1]
         self.mbar = nbody[2]
         self.mbar_se = nbody[3]
-        self.rhalf = nbody[4]
+        self.half_mass_radius = nbody[4]
         self.n_trhp = nbody[5]
         self.kappa = nbody[6]
         self.M_seg = nbody[7]
@@ -291,7 +291,7 @@ class star_cluster_particle(internal_dynamics):
         self.eigenvalues = np.empty((0,3)) | units.Gyr**-2
 
         # storing dt probably good for stability so we don't have big jumps in it
-        self.dt = 0.001 | units.Myr
+        self.dt = 0.1 | units.Myr
 
 
         # if tidal field is present
@@ -336,13 +336,13 @@ class star_cluster_particle(internal_dynamics):
             # apply the shock for this component if any component drops below 88% of the last maximum and is approximately a minimum
             if np.abs(lam) < 0.88*self.last_max_evalues[index] and np.gradient(np.abs(self.eigenvalues[:,index]))[-1] >= 0:
                 # Weinberg coefficients
-                Awij = (1 + 0.237 * constants.G * self.N*self.mbar/self.rhalf**3 * (self.model_time-self.time_of_last_shock[-1])**2)**(-3/2)
+                Awij = (1 + 0.237 * constants.G * self.N*self.mbar/self.half_mass_radius**3 * (self.model_time-self.time_of_last_shock[-1])**2)**(-3/2)
 
                 # we need to integrate Tij dt over the time since the last shock - use scipy.integrate.simpson
                 Itid = np.abs(simpson(self.eigenvalues[int(self.time_of_last_shock[index]/dt):,index],
                                        dx=dt.value_in(units.Gyr))/100)**2 * Awij
                 tshock = (self.model_time - self.time_of_last_shock[index]) * 65.6 * (self.particles.mass/(1e4 | units.MSun)) * \
-                      (self.rhalf/(4 | units.pc)) ** -3 * Itid ** -1
+                      (self.half_mass_radius/(4 | units.pc)) ** -3 * Itid ** -1
 
                 dN -= dt*self.N/tshock 
                 self.time_of_last_shock[index]=self.model_time
@@ -352,9 +352,9 @@ class star_cluster_particle(internal_dynamics):
             index+=1
 
         # half mass radius evolution due to tidal shocks
-        dr = dN*self.rhalf/self.N*(2-1/tidal_shock_energy_fraction)
+        dr = dN*self.half_mass_radius/self.N*(2-1/tidal_shock_energy_fraction)
         self.N += dN
-        self.rhalf += dr
+        self.half_mass_radius += dr
 
     def relaxation_evolution(self,tend):
         tol = 1e-6
@@ -446,7 +446,7 @@ class star_cluster_particle(internal_dynamics):
     def output_array(self):
         x, y, z = self.particles[0].position.value_in(units.pc)
         vx, vy, vz = self.particles[0].velocity.value_in(units.km/units.s)
-        return np.array([[self.model_time.value_in(units.Myr), x,y,z,vx,vy,vz, self.N, self.mbar.value_in(units.MSun), self.mbar_se.value_in(units.MSun), self.rhalf.value_in(units.pc),self.rtidal().value_in(units.pc), self.n_trhp, self.kappa, self.M_seg]])
+        return np.array([[self.model_time.value_in(units.Myr), x,y,z,vx,vy,vz, self.N, self.mbar.value_in(units.MSun), self.mbar_se.value_in(units.MSun), self.half_mass_radius.value_in(units.pc),self.rtidal().value_in(units.pc), self.n_trhp, self.kappa, self.M_seg]])
     
     def stop(self):
         pass

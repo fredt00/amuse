@@ -223,8 +223,10 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
     np.random.seed(123)
     if restart_file:
         cluster_file = "cluster_"+restart_file
+        if cluster_model: cluster_file += ".txt"
+        else: cluster_file += ".hdf5"
         if not analytic:
-            galaxy_file = "galaxy_"+restart_file
+            galaxy_file = "galaxy_"+restart_file + ".hdf5"
     # set up galaxy IC/potential
     galaxy, gravity_from_galaxy = configure_galaxy(N_halo, Mh, Rh, t_settle, galaxy_file, potential_option, potential_parameters,
                                                     potential_units, analytic, restart_time, dt,eps_gal_to_clu, galaxy_force_number_of_workers, galaxy_file_type)
@@ -303,11 +305,9 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
         # save output
         if integrator.time.value_in(units.Myr) % output_interval.value_in(units.Myr)==0:
             # cluster.transfer_unbound_particles()
+            print("cluster position in galactic frame",cluster.particles.position.in_(units.kpc))
             if not analytic:
-                print('cluster distance from galactic centre', (cluster.particles.center_of_mass()- galaxy.particles.center_of_mass()).length().in_(units.kpc))
                 io.write_set_to_file( galaxy.particles,'galaxy_'+restart_file+".hdf5",'hdf5', timestamp=integrator.time, append_to_file=True)
-            else:
-                print('cluster distance from galactic centre', cluster.particles.center_of_mass().length().in_(units.kpc))
             if cluster_model:
                 # append cluster.output_array() to end of the text file above 
                 with open('cluster_'+restart_file+".txt", "ab") as f:
