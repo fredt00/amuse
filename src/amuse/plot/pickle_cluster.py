@@ -48,7 +48,7 @@ def amuse_cluster(filename, data):
         print(t_snap.in_(units.Myr))
 
         converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
-        bound = cluster.bound_subset(tidal_radius=80 | units.pc, unit_converter=converter).copy()
+        bound = cluster.bound_subset(tidal_radius=80 | units.pc, unit_converter=converter, strict=True).copy()
         # unbound = cluster.difference(bound).copy()
 
         print("number of bound particles", len(bound))
@@ -70,9 +70,10 @@ def amuse_cluster(filename, data):
         scaler.stop()
 
         inside = bound.position.lengths() < rhalf
-        
+        E = bound.kinetic_energy() + potential_energy
+        data["E"].append(E)
         data['psi'].append((bound.mass[inside]**(5/2)).mean()/bound.mass[inside].mean()**(5/2))
-        data['kappa'].append(-(bound.kinetic_energy() + potential_energy)*rhalf/(constants.G*bound.mass.sum()**2))
+        data['kappa'].append(-E*rhalf/(constants.G*bound.mass.sum()**2))
     return data
 
 def model_cluster(filename, data):
@@ -113,7 +114,7 @@ def main(filename, cluster_file_type, outfile):
     else:
         print('File type not recognised')
 
-    with open(outfile+'.pickle', 'wb') as handle:
+    with open(outfile, 'wb') as handle:
             pickle.dump(final_data, handle)
 
     return 0
