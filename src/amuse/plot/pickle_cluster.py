@@ -93,7 +93,7 @@ def model_cluster(filename, data):
 
 
 
-def main(filename, file_type, outfile):
+def main(filename, cluster_file_type, outfile):
     print("reading in " + filename + " of type " + file_type + " and outputting to " + outfile)
     data = {}
     data['time'] = [] | units.Myr
@@ -106,9 +106,9 @@ def main(filename, file_type, outfile):
     data['kappa'] = []
     data["RhJ"] = [] | units.pc
 
-    if file_type == 'hdf5':
+    if cluster_file_type == 'hdf5':
         final_data = amuse_cluster(filename, data)
-    elif file_type == 'txt':
+    elif cluster_file_type == 'txt':
         final_data = model_cluster(filename, data)
     else:
         print('File type not recognised')
