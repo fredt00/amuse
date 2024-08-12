@@ -178,7 +178,7 @@ def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_positio
     converter = nbody_system.nbody_to_si(M_cluster, dt)
 
     if cluster_model:
-        cluster = star_cluster_particle(mass=M_cluster, half_mass_radius=r_half, position=Rinit, velocity=Vinit, grav_instance=galaxy, stellar_evolution=stellar_evolution)
+        cluster = star_cluster_particle(N=N_cluster, mass=M_cluster,half_mass_radius=r_half, position=Rinit, velocity=Vinit, grav_instance=galaxy, stellar_evolution=stellar_evolution)
     else:
         cluster_particles = None
         if stellar_evolution: stellar_evolution=SSE
@@ -246,7 +246,7 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
 
     if not restart_file:
         restart_file= 'sim_analytic_{:s}_df_model_{:s}_cluster_model_{:s}_Mc{:g}W{:g}R{:g}V{:g}'.format(str(analytic),str(df_model),str(cluster_model),
-                                                                                            M_cluster.value_in(units.MSun),W0,
+                                                                                            cluster.particles.mass.sum().value_in(units.MSun),W0,
                                                                                             Rinit.length().value_in(units.kpc), 
                                                                                             Vinit.length().value_in(units.kms))
         print("output being saved to", restart_file)
