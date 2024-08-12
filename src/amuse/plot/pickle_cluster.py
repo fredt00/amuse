@@ -42,7 +42,7 @@ sys.setrecursionlimit(10000)
 
 def amuse_cluster(filename, data):
     print('about to read '+ filename)
-    data_cluster = io.read_set_from_file('cluster_'+filename, close_file=True)
+    data_cluster = io.read_set_from_file(filename, close_file=True)
     for cluster in data_cluster.history:
         t_snap = cluster.get_timestamp().in_(units.Myr)
         print(t_snap.in_(units.Myr))
