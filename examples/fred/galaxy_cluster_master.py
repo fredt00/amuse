@@ -258,7 +258,11 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
             io.write_set_to_file(galaxy.particles,'galaxy_'+restart_file + ".hdf5",'hdf5', timestamp=restart_time,append_to_file=False)
 
     # add them to bridge in correct configuration
-    integrator=bridge.Bridge(verbose=True, timestep=dt, use_threading=True)
+    if cluster_model:
+        thread=True
+    else:
+        thread=False
+    integrator=bridge.Bridge(verbose=True, timestep=dt, use_threading=thread)
     integrator.time = restart_time
 
     if analytic:
