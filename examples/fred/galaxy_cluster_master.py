@@ -259,9 +259,9 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
 
     # add them to bridge in correct configuration
     if cluster_model:
-        thread=True
-    else:
         thread=False
+    else:
+        thread=True
     integrator=bridge.Bridge(verbose=True, timestep=dt, use_threading=thread)
     integrator.time = restart_time
 
