@@ -19,7 +19,7 @@ import pynbody
 def pre_evolve_galaxy(galaxy, converter, t_settle, eps_gal_to_clu):
     print('evolving galaxy IC to', t_settle.in_(units.Gyr), 'to allow it to settle')
     gravity_gal = Fi(converter,mode='openmp',redirection='file',redirect_file='output_fi.txt')
-    gravity_gal.parameters.epsilon_squared=galaxy.converter.to_nbody(eps_gal_to_clu**2)
+    gravity_gal.parameters.epsilon_squared=converter.to_nbody(eps_gal_to_clu**2)
     gravity_gal.parameters.use_hydro_flag=False
     gravity_gal.particles.add_particles(galaxy)
     channel_to_galaxy = gravity_gal.particles.new_channel_to(galaxy)
@@ -111,7 +111,7 @@ def configure_galaxy(N_halo, Mh, Rh, t_settle, galaxy_file, potential_option, po
     else:
         if galaxy_file:
             if galaxy_file_type=='dice':
-                galaxy = setup_dice_galaxy(galaxy_file, t_settle, eps_gal_to_clu)
+                galaxy_particles = setup_dice_galaxy(galaxy_file, t_settle, eps_gal_to_clu)
             else:
                 galaxy_particles = read_hdf_and_get_requested_snapshot(galaxy_file, restart_time)
         else:
@@ -178,7 +178,7 @@ def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_positio
     converter = nbody_system.nbody_to_si(M_cluster, dt)
 
     if cluster_model:
-        cluster = star_cluster_particle(M_cluster, r_half, Rinit, Vinit, grav_instance=galaxy, stellar_evolution=stellar_evolution)
+        cluster = star_cluster_particle(mass=M_cluster, half_mass_radius=r_half, position=Rinit, velocity=Vinit, grav_instance=galaxy, stellar_evolution=stellar_evolution)
     else:
         cluster_particles = None
         if stellar_evolution: stellar_evolution=SSE
@@ -187,9 +187,27 @@ def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_positio
         cluster = star_cluster(code=petar, code_converter=converter, particles=cluster_particles, W0=W0, r_tidal=r_tidal,r_half=r_half, n_particles=N_cluster,
                                     M_cluster=M_cluster,code_number_of_workers=star_cluster_number_of_workers, stellar_evolution=stellar_evolution, field_code = galaxy, time=restart_time)
         if restart_time==0 | units.Myr:
+            cluster.particles.move_to_center()
             cluster.particles.position += Rinit
             cluster.particles.velocity += Vinit
     return cluster, Rinit, Vinit
+
+def restart_cluster_model(restart_file, restart_time, gravity):
+    filename = 'cluster_'+restart_file+".txt"
+    print('reading in cluster model IC from ' + filename)
+    data = np.genfromtxt(filename)
+    select = data[:,0]==restart_time.value_in(units.Myr)
+    position = data[select,1:4] | units.pc
+    velocity = data[select,4:7] | units.kms
+    N = data[select,7]
+    mbar = data[select,8] | units.MSun
+    mbar_se = data[select,9] | units.MSun
+    half_mass_radius = data[select,10] | units.pc
+    n_trhp = data[select,12]
+    kappa = data[select,13]
+    M_seg = data[select,14]
+    cluster = star_cluster_particle(N, None, half_mass_radius, kappa, M_seg, mbar, mbar_se, n_trhp, position, velocity, gravity, True, None, restart_time)
+    return cluster
     
 # The main function that sets up the simulation and evolves it
 def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0, N_halo = 10000, N_cluster = None, W0=5.0, r_half = None, r_tidal = None,
@@ -212,6 +230,8 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
                                                     potential_units, analytic, restart_time, dt,eps_gal_to_clu, galaxy_force_number_of_workers, galaxy_file_type)
     
     # set up the cluster - new IC or read in
+    if restart_file and cluster_model:
+        cluster = restart_cluster_model(restart_file, restart_time, galaxy)
     cluster, Rinit, Vinit = configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_position, initial_velocity, Vcirc_fraction, cluster_model,
                        cluster_file, cluster_file_type, restart_time, stellar_evolution, galaxy, analytic, dt,
                          star_cluster_number_of_workers)
@@ -223,15 +243,19 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
             dyn_fric = dynamical_friction(galaxy, cluster.bound.particles, half_mass_radius = cluster.half_mass_radius) # need rh to update!
 
     if not restart_file:
-        restart_file= 'sim_analytic_{:s}_df_model_{:s}_Mc{:g}W{:g}R{:g}V{:g}.hdf5'.format(str(analytic),str(df_model),
+        restart_file= 'sim_analytic_{:s}_df_model_{:s}_Mc{:g}W{:g}R{:g}V{:g}'.format(str(analytic),str(df_model),
                                                                                             M_cluster.value_in(units.MSun),W0,
                                                                                             Rinit.length().value_in(units.kpc), 
                                                                                             Vinit.length().value_in(units.kms))
-
+        print("output being saved to", restart_file)
         # store initial conditions
-        io.write_set_to_file(cluster.particles,'cluster_'+restart_file,'hdf5', timestamp=restart_time, append_to_file=False)
+        if cluster_model:
+            # write cluster.output_array() to first line of a text file with numpy
+            np.savetxt('cluster_'+restart_file+".txt", cluster.output_array())
+        else:
+            io.write_set_to_file(cluster.particles,'cluster_'+restart_file+".hdf5",'hdf5', timestamp=restart_time, append_to_file=False)
         if not analytic:
-            io.write_set_to_file(galaxy.particles,'galaxy_'+restart_file,'hdf5', timestamp=restart_time,append_to_file=False)
+            io.write_set_to_file(galaxy.particles,'galaxy_'+restart_file + ".hdf5",'hdf5', timestamp=restart_time,append_to_file=False)
 
     # add them to bridge in correct configuration
     integrator=bridge.Bridge(verbose=True, timestep=dt, use_threading=True)
@@ -242,23 +266,27 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
             integrator.add_system(cluster, (galaxy, dyn_fric,), do_sync=True)
         else:
             integrator.add_system(cluster, (galaxy,), do_sync=True)
-        integrator.add_system(cluster.unbound, (galaxy, cluster,), do_sync=True)
+        if not cluster_model:
+            integrator.add_system(cluster.unbound, (galaxy, cluster,), do_sync=True)
     elif df_model:
         system=bridge.GravityCodeInField(cluster, (galaxy, df_model,), do_sync=True, verbose=True,
                     radius_is_eps = False, h_smooth_is_eps=False, zero_smoothing=False, softening_length_squared=eps_gal_to_clu**2)
-        unbound_system=bridge.GravityCodeInField(cluster.unbound, (galaxy, cluster,), do_sync=True, verbose=True,
-                    radius_is_eps = False, h_smooth_is_eps=False, zero_smoothing=False, softening_length_squared=eps_gal_to_clu**2)
+        if not cluster_model:
+            unbound_system=bridge.GravityCodeInField(cluster.unbound, (galaxy, cluster,), do_sync=True, verbose=True,
+                        radius_is_eps = False, h_smooth_is_eps=False, zero_smoothing=False, softening_length_squared=eps_gal_to_clu**2)
+            integrator.add_code(unbound_system)
         integrator.add_code(system)
-        integrator.add_code(unbound_system)
         integrator.add_code(galaxy)
     else:
         # for now use the softening internal to fi code
         system=bridge.GravityCodeInField(cluster, (galaxy,), do_sync=True, verbose=True)#,
                     #radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
-        unbound_system=bridge.GravityCodeInField(cluster.unbound, (galaxy,cluster,), do_sync=True, verbose=True)#,
-                    # radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
+        if not cluster_model:
+            unbound_system=bridge.GravityCodeInField(cluster.unbound, (galaxy,cluster,), do_sync=True, verbose=True)#,
+                        # radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False,softening_length_squared=eps_gal_to_clu**2)
+            integrator.add_code(unbound_system)
         integrator.add_code(system)
-        integrator.add_code(unbound_system)
+        
         system_cluster=bridge.GravityCodeInField(galaxy, (cluster,), do_sync=True, verbose=True,
                     radius_is_eps=False, h_smooth_is_eps=False, zero_smoothing=False, softening_length_squared=(0.01 | units.pc)**2)
         integrator.add_code(system_cluster)
@@ -272,12 +300,17 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
         if integrator.time.value_in(units.Myr) % output_interval.value_in(units.Myr)==0:
             # cluster.transfer_unbound_particles()
             if not analytic:
-                print('cluster distance from galactic centre', (cluster.bound.particles.center_of_mass()- galaxy.particles.center_of_mass()).length().in_(units.kpc))
+                print('cluster distance from galactic centre', (cluster.particles.center_of_mass()- galaxy.particles.center_of_mass()).length().in_(units.kpc))
+                io.write_set_to_file( galaxy.particles,'galaxy_'+restart_file+".hdf5",'hdf5', timestamp=integrator.time, append_to_file=True)
             else:
-                print('cluster distance from galactic centre', cluster.bound.particles.center_of_mass().length().in_(units.kpc))
-            io.write_set_to_file(cluster.particles,'cluster_'+restart_file,'hdf5', timestamp=integrator.time, append_to_file=True)
-            if not analytic:
-                io.write_set_to_file( galaxy.particles,'galaxy_'+restart_file,'hdf5', timestamp=integrator.time, append_to_file=True)
+                print('cluster distance from galactic centre', cluster.particles.center_of_mass().length().in_(units.kpc))
+            if cluster_model:
+                # append cluster.output_array() to end of the text file above 
+                with open('cluster_'+restart_file+".txt", "ab") as f:
+                    np.savetxt(f, cluster.output_array())
+            else:
+                io.write_set_to_file(cluster.particles,'cluster_'+restart_file + ".hdf5",'hdf5', timestamp=integrator.time, append_to_file=True)
+                
         sys.stdout.flush()
 
     # clean up

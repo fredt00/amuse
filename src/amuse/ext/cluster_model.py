@@ -64,7 +64,7 @@ global y
 y = -0.3
 
 class internal_dynamics(tidal_field):
-    def __init__(self,N,mbar, half_mass_radius, kappa, M_seg, particles, grav_instance, stellar_evolution=False, VG=None):
+    def __init__(self, N, mbar, mbar_se, half_mass_radius, kappa, M_seg, n_trhp, particles, grav_instance, stellar_evolution, VG, time):
         
         super().__init__(grav_instance)
         
@@ -92,7 +92,7 @@ class internal_dynamics(tidal_field):
         self.n_trhp = 0
         self.stellar_evolution = stellar_evolution
 
-        self.model_time = 0. | units.Myr
+        self.model_time = time
 
 
 
@@ -263,10 +263,14 @@ class internal_dynamics(tidal_field):
 ## TO DO
 # - add a unit converter to the class
 class star_cluster_particle(internal_dynamics):
-    def __init__(self, N=None, mass=None, half_mass_radius=None, position=None, velocity=None, grav_instance=None, stellar_evolution=True, VG=None):
+    def __init__(self, N=None, mass=None, half_mass_radius=4.35 | units.pc, kappa=0.2, M_seg=3, mbar=None, mbar_se=None, n_trhp=0,
+                 position=None, velocity=None, grav_instance=None, stellar_evolution=True, VG=None, time = 0 | units.Myr):
         
-        # this is a funciton of the IMF used
-        mbar = 0.6377 | units.MSun
+        # set up initial conditions accounting for restarts
+        if not mbar:
+            mbar = 0.637712441346 | units.MSun # this is only for 0.1-100 MSun kroupa
+        if not mbar_se and time==0 | units.Myr:
+            mbar_se = mbar
         if N:
             mass = mbar*N
         else:
@@ -275,29 +279,25 @@ class star_cluster_particle(internal_dynamics):
             else:
                 raise ValueError('Either N or mass must be set')
 
-        # set initial conditions - has to be particles to function with bridge
+        # has to be particles to function with bridge
         particles = Particles(1)
         particles.mass = mass
         particles.position = position
         particles.velocity = velocity
 
-        # only used if not none
-        self.VG = VG
-
         # set up tidal shock tracking
         self.last_max_evalues = [0,0,0] | units.Gyr**-2
         self.time_of_last_shock = [0,0,0]| units.Myr
         self.eigenvalues = np.empty((0,3)) | units.Gyr**-2
-        # mbar=0.555131467864 | units.MSun
-        # N=18015
 
         # storing dt probably good for stability so we don't have big jumps in it
         self.dt = 0.001 | units.Myr
 
 
         # if tidal field is present
-        super().__init__(N=mass/mbar, mbar = mbar, half_mass_radius=half_mass_radius, kappa=0.2, M_seg=3, particles=particles,
-                            grav_instance=grav_instance, stellar_evolution=stellar_evolution, VG=VG)
+        super().__init__(N=mass/mbar, mbar = mbar, mbar_se=mbar_se,half_mass_radius=half_mass_radius, kappa=kappa, M_seg=M_seg, n_trhp=n_trhp, particles=particles,
+                            grav_instance=grav_instance, stellar_evolution=stellar_evolution, VG=VG, time=time)
+    
 
     def evolve_model(self, tend):
         dt = tend - self.model_time
@@ -441,6 +441,12 @@ class star_cluster_particle(internal_dynamics):
         az=constants.G*mass*(zz-z)/dr2**1.5
         
         return ax,ay,az
+    
+    # array for storing output
+    def output_array(self):
+        x, y, z = self.particles[0].position.value_in(units.pc)
+        vx, vy, vz = self.particles[0].velocity.value_in(units.km/units.s)
+        return np.array([[self.model_time.value_in(units.Myr), x,y,z,vx,vy,vz, self.N, self.mbar.value_in(units.MSun), self.mbar_se.value_in(units.MSun), self.rhalf.value_in(units.pc),self.rtidal().value_in(units.pc), self.n_trhp, self.kappa, self.M_seg]])
     
     def stop(self):
         pass

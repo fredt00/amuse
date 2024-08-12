@@ -177,7 +177,7 @@ class star_cluster(tidal_field):
             self.particles.unbound_time = -1 | units.Myr
         
 
-        self.bound.particles.add_particles(self.particles[particles.unbound_time<0 | units.Myr])
+        self.bound.particles.add_particles(self.particles[self.particles.unbound_time<0 | units.Myr])
         self.unbound.particles.add_particles(self.particles.difference(self.bound.particles))
         self.center_of_mass=center_of_mass(self.bound.particles)
   
