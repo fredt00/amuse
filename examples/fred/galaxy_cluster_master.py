@@ -243,7 +243,7 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
             dyn_fric = dynamical_friction(galaxy, cluster.bound.particles, half_mass_radius = cluster.half_mass_radius) # need rh to update!
 
     if not restart_file:
-        restart_file= 'sim_analytic_{:s}_df_model_{:s}_Mc{:g}W{:g}R{:g}V{:g}'.format(str(analytic),str(df_model),
+        restart_file= 'sim_analytic_{:s}_df_model_{:s}_cluster_model_{:s}_Mc{:g}W{:g}R{:g}V{:g}'.format(str(analytic),str(df_model),str(cluster_model),
                                                                                             M_cluster.value_in(units.MSun),W0,
                                                                                             Rinit.length().value_in(units.kpc), 
                                                                                             Vinit.length().value_in(units.kms))
