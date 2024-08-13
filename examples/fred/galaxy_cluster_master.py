@@ -197,16 +197,17 @@ def restart_cluster_model(restart_file, restart_time, gravity):
     print('reading in cluster model IC from ' + filename)
     data = np.genfromtxt(filename)
     select = data[:,0]==restart_time.value_in(units.Myr)
-    position = data[select,1:4] | units.pc
-    velocity = data[select,4:7] | units.kms
-    N = data[select,7]
-    mbar = data[select,8] | units.MSun
-    mbar_se = data[select,9] | units.MSun
-    half_mass_radius = data[select,10] | units.pc
-    n_trhp = data[select,12]
-    kappa = data[select,13]
-    M_seg = data[select,14]
-    cluster = star_cluster_particle(N, None, half_mass_radius, kappa, M_seg, mbar, mbar_se, n_trhp, position, velocity, gravity, True, None, restart_time)
+    position = data[select,1:4][0] | units.pc
+    velocity = data[select,4:7][0] | units.kms
+    N = data[select,7][0]
+    mbar = data[select,8][0] | units.MSun
+    mbar_se = data[select,9][0] | units.MSun
+    half_mass_radius = data[select,10][0] | units.pc
+    n_trhp = data[select,12][0]
+    kappa = data[select,13][0]
+    M_seg = data[select,14][0]
+    cluster = star_cluster_particle(N=N,mass= None, half_mass_radius=half_mass_radius, kappa=kappa,M_seg= M_seg, mbar=mbar, mbar_se=mbar_se, n_trhp=n_trhp,
+                                    position= position, velocity=velocity, grav_instance=gravity, stellar_evolution=True, VG=None, time=restart_time)
     return cluster
     
 # The main function that sets up the simulation and evolves it
