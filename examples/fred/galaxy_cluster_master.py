@@ -234,9 +234,10 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
     # set up the cluster - new IC or read in
     if restart_file and cluster_model:
         cluster = restart_cluster_model(restart_file, restart_time, galaxy)
-    cluster, Rinit, Vinit = configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_position, initial_velocity, Vcirc_fraction, cluster_model,
-                       cluster_file, cluster_file_type, restart_time, stellar_evolution, galaxy, analytic, dt,
-                         star_cluster_number_of_workers)
+    else:
+        cluster, Rinit, Vinit = configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_position, initial_velocity, Vcirc_fraction, cluster_model,
+                        cluster_file, cluster_file_type, restart_time, stellar_evolution, galaxy, analytic, dt,
+                            star_cluster_number_of_workers)
 
     if df_model:
         if cluster_model:
