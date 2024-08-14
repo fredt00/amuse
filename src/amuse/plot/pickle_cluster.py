@@ -61,8 +61,10 @@ def amuse_cluster(filename, data):
             CoM = bound.center_of_mass()
             CoM_vel = bound.center_of_mass_velocity()
             particle = bound[(bound.position-CoM).lengths().number.argmax()].copy()
+            print(particle)
             calc = Particles()
             calc.add_particle(particle)
+            print(calc)
             # remove it from the set so it is not included in potential calculation
             bound.remove_particles(calc)
             # determine total energy
