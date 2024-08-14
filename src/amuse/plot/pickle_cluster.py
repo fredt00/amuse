@@ -43,13 +43,34 @@ sys.setrecursionlimit(10000)
 def amuse_cluster(filename, data):
     print('about to read '+ filename)
     data_cluster = io.read_set_from_file(filename, close_file=True)
+    i=0
+    unbound_particles = Particles()
     for cluster in data_cluster.history:
         t_snap = cluster.get_timestamp().in_(units.Myr)
         print(t_snap.in_(units.Myr))
 
-        converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
-        bound = cluster.bound_subset(tidal_radius=80 | units.pc, unit_converter=converter, strict=True).copy()
+        # the other way to determine what is bound is to sort by radius then go from largest to smallest and remove if energy>0
+        # then this particle is not included in energy determination of the next particle
+        # ones deemed unbound can probably be removed from the next loop too
+        bound = cluster.remove_particles(unbound_particles).copy()
+        cmx, cmy, cmz = bound.center_of_mass()
+        cmvx, cmvy, cmvz = bound.center_of_mass_velocity()
+        r2=(cluster.x-cmx)**2+(cluster.y-cmy)**2+(cluster.z-cmz)**2
+        a=numpy.argsort(r2.number)[::-1]
+        sorted_cluster=bound[a].copy()
+        for particle in sorted_cluster:
+            energy = 0.5*particle.mass*((particle.vx-cmvx)**2+(particle.vy-cmvy)**2+(particle.vz-cmvz)**2) + particle.potential_energy_in_field(field_particles=bound)
+            if energy > 0:
+                bound.remove_particle(particle)
+                unbound_particles.add_particle(particle)
+            else:
+                break
+
+        # converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
+        # bound = cluster.bound_subset(tidal_radius=80 | units.pc, unit_converter=converter, strict=True).copy()
         # unbound = cluster.difference(bound).copy()
+
+        
 
         print("number of bound particles", len(bound))
 
@@ -82,7 +103,7 @@ def model_cluster(filename, data):
     #  self.mbar.value_in(units.MSun), self.mbar_se.value_in(units.MSun), self.half_mass_radius.value_in(units.pc),
     # self.rtidal().value_in(units.pc), self.n_trhp, self.kappa, self.M_seg]])
     data['time'] = file[:,0] | units.Myr
-    data['galactocentric_radius'] = numpy.sqrt(file[:,1]**2 + file[:,2]**2 + file[:,3]**2) | units.kpc
+    data['galactocentric_radius'] = numpy.sqrt(file[:,1]**2 + file[:,2]**2 + file[:,3]**2) | units.pc
     data['mass'] = file[:,7]*file[:,8] | units.MSun
     data['rhalf'] = file[:,10] | units.pc
     # data['psi'] = file[:,13] # within the half mass radius
