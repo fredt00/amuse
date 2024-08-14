@@ -68,7 +68,7 @@ def amuse_cluster(filename, data):
             kinetic = 0.5*particle.mass*(particle.vx**2+particle.vy**2+particle.vz**2)
             potential = calc.potential_energy_in_field(field_particles=bound)
             energy = kinetic+potential
-            if energy > 0:
+            if energy > 0 | units.erg:
                 unbound_particles.add_particle(particle)
             else:
                 bound.add_particle(particle)
