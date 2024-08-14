@@ -49,36 +49,37 @@ def amuse_cluster(filename, data):
         t_snap = cluster.get_timestamp().in_(units.Myr)
         print(t_snap.in_(units.Myr))
 
+
         # the other way to determine what is bound is to sort by radius then go from largest to smallest and remove if energy>0
         # then this particle is not included in energy determination of the next particle
         # ones deemed unbound can probably be removed from the next loop too
-        bound = cluster
-        if len(unbound_particles) > 0:
-            bound.remove_particles(unbound_particles)
+        # bound = cluster
+        # if len(unbound_particles) > 0:
+        #     bound.remove_particles(unbound_particles)
  
-        while True:
-            # find the particle with the largest radius
-            CoM = bound.center_of_mass()
-            CoM_vel = bound.center_of_mass_velocity()
-            particle = bound[(bound.position-CoM).lengths().number.argmax()].copy()
-            if (particle.position-CoM).length() < (70 | units.pc): break
-            calc = Particles()
-            calc.add_particle(particle)
-            # remove it from the set so it is not included in potential calculation
-            bound.remove_particles(calc)
-            # determine total energy
-            kinetic = 0.5*particle.mass*(particle.velocity-CoM_vel).lengths()**2
-            potential = calc.potential_energy_in_field(field_particles=bound)
-            energy = kinetic+potential
-            if energy > (0 | units.erg):
-                unbound_particles.add_particles(calc)
-            else:
-                # if not unbound add back to bound set
-                bound.add_particles(calc)
-                break
+        # while True:
+        #     # find the particle with the largest radius
+        #     CoM = bound.center_of_mass()
+        #     CoM_vel = bound.center_of_mass_velocity()
+        #     particle = bound[(bound.position-CoM).lengths().number.argmax()].copy()
+        #     if (particle.position-CoM).length() < (70 | units.pc): break
+        #     calc = Particles()
+        #     calc.add_particle(particle)
+        #     # remove it from the set so it is not included in potential calculation
+        #     bound.remove_particles(calc)
+        #     # determine total energy
+        #     kinetic = 0.5*particle.mass*(particle.velocity-CoM_vel).lengths()**2
+        #     potential = calc.potential_energy_in_field(field_particles=bound)
+        #     energy = kinetic+potential
+        #     if energy > (0 | units.erg):
+        #         unbound_particles.add_particles(calc)
+        #     else:
+        #         # if not unbound add back to bound set
+        #         bound.add_particles(calc)
+        #         break
 
-        # converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
-        # bound = cluster.bound_subset(tidal_radius=80 | units.pc, unit_converter=converter, strict=True).copy()
+        converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
+        bound = cluster.bound_subset(tidal_radius=80 | units.pc, unit_converter=converter).copy()
         # unbound = cluster.difference(bound).copy()
 
         
