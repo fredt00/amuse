@@ -53,6 +53,8 @@ def amuse_cluster(filename, data):
         # then this particle is not included in energy determination of the next particle
         # ones deemed unbound can probably be removed from the next loop too
         if len(unbound_particles) > 0:
+            print(len(cluster))
+            print(len(unbound_particles))
             bound = cluster.remove_particles(unbound_particles)
         else:
             bound = cluster
@@ -69,7 +71,7 @@ def amuse_cluster(filename, data):
             kinetic = 0.5*particle.mass*(particle.velocity-CoM_vel).lengths()**2
             potential = calc.potential_energy_in_field(field_particles=bound)
             energy = kinetic+potential
-            if energy > 0 | units.erg:
+            if energy > (0 | units.erg):
                 unbound_particles.add_particles(calc)
             else:
                 # if not unbound add back to bound set
