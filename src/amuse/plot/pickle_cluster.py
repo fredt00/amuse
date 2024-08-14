@@ -64,14 +64,14 @@ def amuse_cluster(filename, data):
         for particle in sorted_cluster:
             calc = Particles()
             calc.add_particle(particle)
-            bound.remove_particle(particle)
+            bound.remove_particles(calc)
             kinetic = 0.5*particle.mass*((particle.vx-cmvx)**2+(particle.vy-cmvy)**2+(particle.vz-cmvz)**2)
             potential = calc.potential_energy_in_field(field_particles=bound)
             energy = kinetic+potential
             if energy > 0 | units.erg:
-                unbound_particles.add_particle(particle)
+                unbound_particles.add_particles(calc)
             else:
-                bound.add_particle(particle)
+                bound.add_particles(calc)
                 break
 
         # converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
