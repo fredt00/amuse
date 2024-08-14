@@ -53,12 +53,12 @@ def amuse_cluster(filename, data):
         # then this particle is not included in energy determination of the next particle
         # ones deemed unbound can probably be removed from the next loop too
         if len(unbound_particles) > 0:
-            bound = cluster.remove_particles(unbound_particles).copy()
+            bound = cluster.remove_particles(unbound_particles)
         else:
             bound = cluster.copy()
         cmx, cmy, cmz = bound.center_of_mass()
         cmvx, cmvy, cmvz = bound.center_of_mass_velocity()
-        r2=(cluster.x-cmx)**2+(cluster.y-cmy)**2+(cluster.z-cmz)**2
+        r2=(bound.x-cmx)**2+(bound.y-cmy)**2+(bound.z-cmz)**2
         a=numpy.argsort(r2.number)[::-1]
         sorted_cluster=bound[a].copy()
         for particle in sorted_cluster:
