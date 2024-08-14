@@ -61,6 +61,7 @@ def amuse_cluster(filename, data):
             CoM = bound.center_of_mass()
             CoM_vel = bound.center_of_mass_velocity()
             particle = bound[(bound.position-CoM).lengths().number.argmax()].copy()
+            if (particle.position-CoM).length < (70 | units.pc): break
             calc = Particles()
             calc.add_particle(particle)
             # remove it from the set so it is not included in potential calculation
