@@ -62,7 +62,9 @@ def amuse_cluster(filename, data):
         a=numpy.argsort(r2.number)[::-1]
         sorted_cluster=bound[a].copy()
         for particle in sorted_cluster:
-            energy = 0.5*particle.mass*((particle.vx-cmvx)**2+(particle.vy-cmvy)**2+(particle.vz-cmvz)**2) + particle.potential_energy_in_field(field_particles=bound)
+            kinetic = 0.5*particle.mass*(particle.vx**2+particle.vy**2+particle.vz**2)
+            potential = particle.potential_energy_in_field(field_particles=bound)
+            energy = kinetic+potential
             if energy > 0:
                 bound.remove_particle(particle)
                 unbound_particles.add_particle(particle)
