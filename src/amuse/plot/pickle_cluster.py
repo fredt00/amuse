@@ -56,6 +56,7 @@ def amuse_cluster(filename, data):
             print(len(cluster))
             print(len(unbound_particles))
             bound = cluster.remove_particles(unbound_particles)
+            print(len(bound))
         else:
             bound = cluster
         while True:
