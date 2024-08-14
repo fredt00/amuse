@@ -53,18 +53,16 @@ def amuse_cluster(filename, data):
         # then this particle is not included in energy determination of the next particle
         # ones deemed unbound can probably be removed from the next loop too
         if len(unbound_particles) > 0:
-            bound = cluster.remove_particles(unbound_particles).copy()
+            bound = cluster.remove_particles(unbound_particles)
         else:
-            bound = cluster.copy()
+            bound = cluster
         while True:
             # find the particle with the largest radius
             CoM = bound.center_of_mass()
             CoM_vel = bound.center_of_mass_velocity()
             particle = bound[(bound.position-CoM).lengths().number.argmax()].copy()
-            print(particle)
             calc = Particles()
             calc.add_particle(particle)
-            print(calc)
             # remove it from the set so it is not included in potential calculation
             bound.remove_particles(calc)
             # determine total energy
