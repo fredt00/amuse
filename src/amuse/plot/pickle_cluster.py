@@ -53,27 +53,25 @@ def amuse_cluster(filename, data):
         # then this particle is not included in energy determination of the next particle
         # ones deemed unbound can probably be removed from the next loop too
         if len(unbound_particles) > 0:
-            print(unbound_particles)
             bound = cluster.copy().remove_particles(unbound_particles)
-            print(bound)
         else:
             bound = cluster.copy()
-        cmx, cmy, cmz = bound.center_of_mass()
-        cmvx, cmvy, cmvz = bound.center_of_mass_velocity()
-        r2=(bound.x-cmx)**2+(bound.y-cmy)**2+(bound.z-cmz)**2
-        a=numpy.argsort(r2.number)[::-1]
-        sorted_cluster=bound[a].copy()
-        for particle in sorted_cluster:
-            calc = Particles()
-            calc.add_particle(particle)
-            bound.remove_particles(calc)
-            kinetic = 0.5*particle.mass*((particle.vx-cmvx)**2+(particle.vy-cmvy)**2+(particle.vz-cmvz)**2)
-            potential = calc.potential_energy_in_field(field_particles=bound)
+        while True:
+            # find the particle with the largest radius
+            CoM = bound.center_of_mass()
+            CoM_vel = bound.center_of_mass_velocity()
+            particle = bound[(bound.position-CoM).lengths().argmax()]
+            # remove it from the set so it is not included in potential calculation
+            bound.remove_particles(particle)
+            # determine total energy
+            kinetic = 0.5*particle.mass*(particle.velocity-CoM_vel).lengths()**2
+            potential = particle.potential_energy_in_field(field_particles=bound)
             energy = kinetic+potential
             if energy > 0 | units.erg:
-                unbound_particles.add_particles(calc)
+                unbound_particles.add_particles(particle)
             else:
-                bound.add_particles(calc)
+                # if not unbound add back to bound set
+                bound.add_particles(particle)
                 break
 
         # converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
