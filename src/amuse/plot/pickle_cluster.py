@@ -62,13 +62,16 @@ def amuse_cluster(filename, data):
         a=numpy.argsort(r2.number)[::-1]
         sorted_cluster=bound[a].copy()
         for particle in sorted_cluster:
+            calc = Particles()
+            calc.add_particle(particle)
+            bound.remove_particle(particle)
             kinetic = 0.5*particle.mass*(particle.vx**2+particle.vy**2+particle.vz**2)
-            potential = particle.potential_energy_in_field(field_particles=bound)
+            potential = calc.potential_energy_in_field(field_particles=bound)
             energy = kinetic+potential
             if energy > 0:
-                bound.remove_particle(particle)
                 unbound_particles.add_particle(particle)
             else:
+                bound.add_particle(particle)
                 break
 
         # converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
