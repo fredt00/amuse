@@ -61,17 +61,19 @@ def amuse_cluster(filename, data):
             CoM = bound.center_of_mass()
             CoM_vel = bound.center_of_mass_velocity()
             particle = bound[(bound.position-CoM).lengths().number.argmax()]
+            calc = Particles()
+            calc.add_particle(particle)
             # remove it from the set so it is not included in potential calculation
-            bound.remove_particles(particle)
+            bound.remove_particles(calc)
             # determine total energy
             kinetic = 0.5*particle.mass*(particle.velocity-CoM_vel).lengths()**2
-            potential = particle.potential_energy_in_field(field_particles=bound)
+            potential = calc.potential_energy_in_field(field_particles=bound)
             energy = kinetic+potential
             if energy > 0 | units.erg:
-                unbound_particles.add_particles(particle)
+                unbound_particles.add_particles(calc)
             else:
                 # if not unbound add back to bound set
-                bound.add_particles(particle)
+                bound.add_particles(calc)
                 break
 
         # converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
