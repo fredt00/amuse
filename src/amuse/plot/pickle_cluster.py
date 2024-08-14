@@ -53,7 +53,7 @@ def amuse_cluster(filename, data):
         # then this particle is not included in energy determination of the next particle
         # ones deemed unbound can probably be removed from the next loop too
         if len(unbound_particles) > 0:
-            bound = cluster.copy().remove_particles(unbound_particles)
+            bound = cluster.remove_particles(unbound_particles).copy()
         else:
             bound = cluster.copy()
         while True:
