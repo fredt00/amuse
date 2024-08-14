@@ -60,7 +60,7 @@ def amuse_cluster(filename, data):
             # find the particle with the largest radius
             CoM = bound.center_of_mass()
             CoM_vel = bound.center_of_mass_velocity()
-            particle = bound[(bound.position-CoM).lengths().number.argmax()]
+            particle = bound[(bound.position-CoM).lengths().number.argmax()].copy()
             calc = Particles()
             calc.add_particle(particle)
             # remove it from the set so it is not included in potential calculation
