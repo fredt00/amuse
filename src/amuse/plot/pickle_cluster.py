@@ -52,13 +52,10 @@ def amuse_cluster(filename, data):
         # the other way to determine what is bound is to sort by radius then go from largest to smallest and remove if energy>0
         # then this particle is not included in energy determination of the next particle
         # ones deemed unbound can probably be removed from the next loop too
+        bound = cluster
         if len(unbound_particles) > 0:
-            print(len(cluster))
-            print(len(unbound_particles))
-            bound = cluster.remove_particles(unbound_particles)
-            print(len(bound))
-        else:
-            bound = cluster
+            bound.remove_particles(unbound_particles)
+ 
         while True:
             # find the particle with the largest radius
             CoM = bound.center_of_mass()
