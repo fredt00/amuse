@@ -52,7 +52,10 @@ def amuse_cluster(filename, data):
         # the other way to determine what is bound is to sort by radius then go from largest to smallest and remove if energy>0
         # then this particle is not included in energy determination of the next particle
         # ones deemed unbound can probably be removed from the next loop too
-        bound = cluster.remove_particles(unbound_particles).copy()
+        if len(unbound_particles) > 0:
+            bound = cluster.remove_particles(unbound_particles).copy()
+        else:
+            bound = cluster.copy()
         cmx, cmy, cmz = bound.center_of_mass()
         cmvx, cmvy, cmvz = bound.center_of_mass_velocity()
         r2=(cluster.x-cmx)**2+(cluster.y-cmy)**2+(cluster.z-cmz)**2
