@@ -90,11 +90,13 @@ class internal_dynamics(tidal_field):
         # ok so i think we want mean mass to be for the whole cluster, buy psi should depend only within half_mass_radius... makes it harder to relate to other variables like mbar...
         # perhaps M_seg and or kappa could relate mbar_h to mbar?
         self.n_trhp = 0
+        
         self.stellar_evolution = stellar_evolution
 
         self.model_time = time
-
-
+        
+        # compute the initial relaxation time
+        self.trhp = self.relaxation_time_prime()
 
     # singular isothermal sphere - used if VG is specified. for comparisson with EMACSS paper
     def emacss_isothermal_rj(self):
@@ -104,7 +106,7 @@ class internal_dynamics(tidal_field):
 
     def rtidal(self):
         if self.grav_instance:
-            return self.tidal_radius(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
+            return self.tidal_radius(40 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
                                         self.particles.position[0].z, self.particles.mass[0])
         elif self.VG:
             return self.emacss_isothermal_rj()
@@ -180,7 +182,7 @@ class internal_dynamics(tidal_field):
     # note sign change compared to paper
     def gamma_se(self):
         if self.stellar_evolution and self.model_time>main_sequence_lifetime_m_up:
-            return nu * self.relaxation_time_prime()/self.model_time * self.mbar_se/self.mbar
+            return nu * self.trhp/self.model_time * self.mbar_se/self.mbar
         else:
             return 0.
 
@@ -219,28 +221,28 @@ class internal_dynamics(tidal_field):
 
     # derived rates divided by variable (so log rate)
     def dNdt(self):
-        return -self.xi() * self.N/self.relaxation_time_prime()
+        return -self.xi() * self.N/self.trhp
     def dmbardt(self):
-        return self.gamma() * self.mbar/ self.relaxation_time_prime()
+        return self.gamma() * self.mbar/ self.trhp
     def dMsegdt(self):
-        return (M1-self.M_seg) * self.M_seg/self.relaxation_time_prime()
+        return (M1-self.M_seg) * self.M_seg/self.trhp
     def dkdt(self):
-        return self.lambd() * self.kappa/ self.relaxation_time_prime()
+        return self.lambd() * self.kappa/ self.trhp
     def drdt(self):
-        return self.mu() * self.half_mass_radius/self.relaxation_time_prime()
+        return self.mu() * self.half_mass_radius/self.trhp
     def dmbar_se_dt(self):
-        return -self.gamma_se() * self.mbar/ self.relaxation_time_prime()
+        return -self.gamma_se() * self.mbar/ self.trhp
 
     def dtrhpdt(self):
         # for counting
-        return 1./self.relaxation_time_prime()
+        return 1./self.trhp
     
     # def dpsidt(self):
         #return -5/2*(1-self.F())*(self.dmbardt()/self.M_seg-self.dMsegdt()/self.M_seg**2)
         # return -5/2*(self.dmbardt() * (self.psi-7.8)-(1-self.F())*self.dMsegdt()/self.M_seg**2)
     
     def min_step(self):
-        return 1.0/(1e6/self.relaxation_time_prime()+1e6/self.model_time)
+        return 1.0/(1e6/self.trhp+1e6/self.model_time)
 
     # an array containing all the evolved parameters to let us update them simultaneously 
     def get_nbody(self):
@@ -396,21 +398,27 @@ class star_cluster_particle(internal_dynamics):
                 self.dt = min(tend - self.model_time, self.dt) 
 
                 # first rk step
+                self.trhp = self.relaxation_time_prime()
                 dr1 = self.rate_array()
                 self.set_nbody(duplicate_array + [self.dt] * (b21 * dr1))
                 # second rk step
+                self.trhp = self.relaxation_time_prime()
                 dr2 = self.rate_array()
                 self.set_nbody(duplicate_array + [self.dt] * (b31 * dr1 + b32 * dr2))
                 # third rk step
+                self.trhp = self.relaxation_time_prime()
                 dr3 = self.rate_array() 
                 self.set_nbody(duplicate_array + [self.dt] * (b41 * dr1 + b42 * dr2 + b43 * dr3))
                 # fourth rk step
+                self.trhp = self.relaxation_time_prime()
                 dr4 = self.rate_array()
                 self.set_nbody(duplicate_array + [self.dt] * (b51 * dr1 + b52 * dr2 + b53 * dr3 + b54 * dr4))
                 # fifth rk step
+                self.trhp = self.relaxation_time_prime()
                 dr5 = self.rate_array()
                 self.set_nbody(duplicate_array + [self.dt] * (b61 * dr1 + b62 * dr2 + b63 * dr3 + b64 * dr4 + b65 * dr5))
                 # sixth rk step
+                self.trhp = self.relaxation_time_prime()
                 dr6 = self.rate_array()
                 self.set_nbody(duplicate_array + [self.dt] * (c1 * dr1 + c3 * dr3 + c4 * dr4 + c6 * dr6))
 
