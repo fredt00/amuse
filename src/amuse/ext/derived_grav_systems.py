@@ -310,18 +310,13 @@ class star_cluster(tidal_field):
     def transfer_unbound_particles(self):
         # transfer unbound particles to the unbound code
         current_framework_bound = self.particles[self.particles.unbound_time == -1 |units.Myr]
-        print(self.particles.unbound_time)
-        print(self.particles.difference(current_framework_bound))
         CoM = current_framework_bound.center_of_mass()
         bound_subset = current_framework_bound.bound_subset(unit_converter=self.converter,tidal_radius=self.tidal_radius(4|units.pc, CoM.x, CoM.y, CoM.z, current_framework_bound.total_mass()), strict=True)
         new_unbound = current_framework_bound.difference(bound_subset)
-        print(new_unbound)
         # remove=new_unbound#[new_unbound.escape_flag]# remove only particles not already removed
         # update escape flag for particles that were not unbound last tstep but are now
         # new_unbound.escape_flag = True
         new_unbound.unbound_time = self.model_time
-        print(new_unbound.unbound_time)
-        print(self.particles.unbound_time)
         self.unbound.particles.add_particles(new_unbound)
         self.bound.particles.remove_particles(new_unbound)
         # redeifine channel just in case?
