@@ -306,7 +306,7 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
         print('evolved to', integrator.time.in_(units.Myr)) 
         # save output
         if integrator.time.value_in(units.Myr) % output_interval.value_in(units.Myr)==0:
-            # cluster.transfer_unbound_particles()
+            cluster.transfer_unbound_particles()
             print("cluster position in galactic frame",cluster.particles.center_of_mass().in_(units.kpc))
             if not analytic:
                 io.write_set_to_file( galaxy.particles,'galaxy_'+restart_file+".hdf5",'hdf5', timestamp=integrator.time, append_to_file=True)

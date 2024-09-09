@@ -104,9 +104,10 @@ class tidal_field(object):
         Txx = ((axx-ax0)/h)
         Tyy = ((ayy-ay0)/h)
         Tzz = ((azz-az0)/h)
-        Txy = ((axy-ax0)/h)
-        Txz = ((axz-ax0)/h)
-        Tyz = ((ayz-ay0)/h)
+
+        Txy = ((ayx-ay0)/h)
+        Txz = ((azx-az0)/h)
+        Tyz = ((azy-az0)/h)
         return Txx,Tyy,Tzz,Txy,Txz,Tyz
     
     def get_tidalfield_at_point_per_gyr_sq(self,scale,x,y,z):
@@ -311,10 +312,10 @@ class star_cluster(tidal_field):
         current_framework_bound = self.particles[self.particles.unbound_time<0 | units.Myr]
         CoM = current_framework_bound.center_of_mass()
         bound_subset = current_framework_bound.bound_subset(unit_converter=self.converter,tidal_radius=self.tidal_radius(4|units.pc, CoM.x, CoM.y, CoM.z, current_framework_bound.total_mass()), strict=True)
-        new_unbound = self.particles.difference(bound_subset)
-        remove=new_unbound[new_unbound.escape_flag]# remove only particles not already removed
+        new_unbound = current_framework_bound.difference(bound_subset)
+        remove=new_unbound#[new_unbound.escape_flag]# remove only particles not already removed
         # update escape flag for particles that were not unbound last tstep but are now
-        new_unbound.escape_flag = True
+        # new_unbound.escape_flag = True
         remove.unbound_time = self.model_time
         self.unbound.particles.add_particles(remove)
         self.bound.particles.remove_particles(remove)

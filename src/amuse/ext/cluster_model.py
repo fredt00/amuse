@@ -293,7 +293,7 @@ class star_cluster_particle(internal_dynamics):
         self.eigenvalues = np.empty((0,3)) | units.Gyr**-2
 
         # storing dt probably good for stability so we don't have big jumps in it
-        self.dt = 0.1 | units.Myr
+        self.dt = 0.5 | units.Myr
 
 
         # if tidal field is present
