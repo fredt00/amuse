@@ -60,6 +60,7 @@ def amuse_cluster(filename, galaxy_filename,data):
         cluster.remove_particles(unbound_particles)
 
         # compute who is bound and who isn't - note this is for old version where the code hasn't already done this for us
+        converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
         while True:
             # the particles in the framework that are currently defined as bound
             # find the centre of mass
@@ -111,7 +112,6 @@ def amuse_cluster(filename, galaxy_filename,data):
         data['rhalf'].append(rhalf)
         
         # this could happen in parallel - would need threadfence at end
-        converter= nbody_system.nbody_to_si(cluster.total_mass(), rhalf[0])
         scaler = FastKick(converter, number_of_workers=20)
         scaler.particles.add_particles(cluster)
         potential_energy = scaler.get_potential_energy()
