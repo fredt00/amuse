@@ -10,6 +10,7 @@ from amuse.units import nbody_system
 import numpy as np
 from scipy.integrate import simpson as simp
 from amuse.ic.brokenimf import MultiplePartIMF
+from amuse.datamodel.particle_attributes import HopContainer
 class center_of_mass(object):
     """
     com=center_of_mass(grav_instance)
@@ -309,21 +310,75 @@ class star_cluster(tidal_field):
 
     def transfer_unbound_particles(self):
         # transfer unbound particles to the unbound code
-        current_framework_bound = self.particles[self.particles.unbound_time == -1 |units.Myr]
-        CoM = current_framework_bound.center_of_mass()
-        bound_subset = current_framework_bound.bound_subset(unit_converter=self.converter,tidal_radius=self.tidal_radius(4|units.pc, CoM.x, CoM.y, CoM.z, current_framework_bound.total_mass()), strict=True)
-        new_unbound = current_framework_bound.difference(bound_subset)
-        # remove=new_unbound#[new_unbound.escape_flag]# remove only particles not already removed
-        # update escape flag for particles that were not unbound last tstep but are now
-        # new_unbound.escape_flag = True
-        new_unbound.unbound_time = self.model_time
-        self.unbound.particles.add_particles(new_unbound)
-        self.bound.particles.remove_particles(new_unbound)
-        # redeifine channel just in case?
+        # current_framework_bound = self.particles[self.particles.unbound_time == -1 |units.Myr]
+        # CoM = current_framework_bound.center_of_mass()
+        # bound_subset = current_framework_bound.bound_subset(unit_converter=self.converter,tidal_radius=self.tidal_radius(4|units.pc, CoM.x, CoM.y, CoM.z, current_framework_bound.total_mass()), strict=True)
+        # new_unbound = current_framework_bound.difference(bound_subset)
+        # # remove=new_unbound#[new_unbound.escape_flag]# remove only particles not already removed
+        # # update escape flag for particles that were not unbound last tstep but are now
+        # # new_unbound.escape_flag = True
+        # new_unbound.unbound_time = self.model_time
+        # self.unbound.particles.add_particles(new_unbound)
+        # self.bound.particles.remove_particles(new_unbound)
+        # # redeifine channel just in case?
+        # self.u2f = self.unbound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
+        # self.b2f = self.bound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
+        # self.f2b = self.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
+        # self.f2u = self.particles.new_channel_to(self.unbound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
+
+
+        ######### NEW ATTEMPT
+        # This must be recursive - we compute the energy of all particles outside the tidal radius and remove the highest +ve energy one - then recompute energy of all outside the new tidal radius etc. repeat until no particles are removed
+        to_remove = Particles()
+        while True:
+            # the particles in the framework that are currently defined as bound
+            current_framework_bound = self.particles[self.particles.unbound_time == -1 |units.Myr].copy()
+
+            # remove particles we have found to be unbound at the current time
+            current_framework_bound.remove_particles(to_remove)
+
+            # find the centre of mass
+            core = current_framework_bound.cluster_core(self.converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
+            position=current_framework_bound.position-core.position
+            r2=position.lengths_squared()
+
+            # find the particles outside the tidal radius - only compute energy of these
+            tidal_radius = self.tidal_radius(4|units.pc, core.position.x, core.position.y, core.position.z, current_framework_bound.total_mass())
+            outside = current_framework_bound[r2 >= tidal_radius**2]
+            if len(outside) == 0:
+                break
+
+            # compute total energies of these particles 
+            energies = [] | units.erg
+            for particle in outside:
+                calc = Particles()
+                calc.add_particle(particle)
+                # remove it from the set so it is not included in potential calculation
+                current_framework_bound.remove_particles(calc)
+                # determine total energy
+                kinetic = 0.5*particle.mass*(particle.velocity-core.velocity).lengths()**2
+                potential = calc.potential_energy_in_field(field_particles=current_framework_bound)
+                energies.append(kinetic+potential)
+                # add it back in so it is included in calculation for next particle
+                current_framework_bound.add_particles(calc)
+
+            # remove the particle with the highest positive energy - if all negative then break
+            if energies.max() > 0 | units.erg:
+                to_remove.add_particle(outside[energies.argmax()])
+            else:
+                break
+        
+        # update the unbound particles
+        self.particles[self.particles.key==to_remove.key].unbound_time = self.model_time
+        self.unbound.particles.add_particles(to_remove)
+        self.bound.particles.remove_particles(to_remove)
+        # redefine channels
         self.u2f = self.unbound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
         self.b2f = self.bound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
         self.f2b = self.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
         self.f2u = self.particles.new_channel_to(self.unbound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
+            
+
     
     def stop(self):
         self.bound.stop()
