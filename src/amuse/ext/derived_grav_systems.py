@@ -329,13 +329,10 @@ class star_cluster(tidal_field):
 
         ######### NEW ATTEMPT
         # This must be recursive - we compute the energy of all particles outside the tidal radius and remove the highest +ve energy one - then recompute energy of all outside the new tidal radius etc. repeat until no particles are removed
-        to_remove = Particles()
+
         while True:
             # the particles in the framework that are currently defined as bound
-            current_framework_bound = self.particles[self.particles.unbound_time == -1 |units.Myr].copy()
-
-            # remove particles we have found to be unbound at the current time
-            current_framework_bound.remove_particles(to_remove)
+            current_framework_bound = self.particles[self.particles.unbound_time == -1 |units.Myr]
 
             # find the centre of mass
             core = current_framework_bound.cluster_core(self.converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
@@ -344,7 +341,7 @@ class star_cluster(tidal_field):
 
             # find the particles outside the tidal radius - only compute energy of these
             tidal_radius = self.tidal_radius(4|units.pc, core.position.x, core.position.y, core.position.z, current_framework_bound.total_mass())
-            outside = current_framework_bound[r2 >= tidal_radius**2]
+            outside = current_framework_bound[r2 > tidal_radius**2]
             if len(outside) == 0:
                 break
 
@@ -352,11 +349,11 @@ class star_cluster(tidal_field):
             energies = [] | units.erg
             for particle in outside:
                 calc = Particles()
-                calc.add_particle(particle)
+                calc.add_particle(particle.copy())
                 # remove it from the set so it is not included in potential calculation
                 current_framework_bound.remove_particles(calc)
                 # determine total energy
-                kinetic = 0.5*particle.mass*(particle.velocity-core.velocity).lengths()**2
+                kinetic = 0.5*calc.mass*(calc.velocity-core.velocity).lengths()**2
                 potential = calc.potential_energy_in_field(field_particles=current_framework_bound)
                 energies.append(kinetic+potential)
                 # add it back in so it is included in calculation for next particle
@@ -364,21 +361,20 @@ class star_cluster(tidal_field):
 
             # remove the particle with the highest positive energy - if all negative then break
             if energies.max() > 0 | units.erg:
-                to_remove.add_particle(outside[energies.argmax()])
+                # update the unbound particles
+                to_remove = outside[energies.argmax()]
+                to_remove.unbound_time = self.model_time
+                self.unbound.particles.add_particle(to_remove)
+                self.bound.particles.remove_particle(to_remove)
             else:
                 break
         
-        # update the unbound particles
-        self.particles[self.particles.key==to_remove.key].unbound_time = self.model_time
-        self.unbound.particles.add_particles(to_remove)
-        self.bound.particles.remove_particles(to_remove)
         # redefine channels
         self.u2f = self.unbound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
         self.b2f = self.bound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
         self.f2b = self.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
         self.f2u = self.particles.new_channel_to(self.unbound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
             
-
     
     def stop(self):
         self.bound.stop()
