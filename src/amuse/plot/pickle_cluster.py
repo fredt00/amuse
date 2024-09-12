@@ -70,7 +70,7 @@ def amuse_cluster(filename, galaxy_filename,data):
 
             # find the particles outside the tidal radius - only compute energy of these
             tidal_radius = gal_field.tidal_radius(4|units.pc, core.position.x, core.position.y, core.position.z, cluster.total_mass())
-            galaxy_force_field.stop()
+           
 
             outside = cluster[r2 > tidal_radius**2]
             if len(outside) == 0:
@@ -99,7 +99,7 @@ def amuse_cluster(filename, galaxy_filename,data):
             else:
                 break
 
-
+        galaxy_force_field.stop()
         print("number of bound particles", len(cluster))
 
         data['time'].append(t_snap)
