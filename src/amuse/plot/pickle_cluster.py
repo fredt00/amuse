@@ -25,6 +25,7 @@ from amuse.community.fastkick.interface import FastKick
 from amuse.datamodel import ParticlesSuperset
 import argparse
 from amuse.datamodel.particle_attributes import HopContainer
+from amuse.community.ph4.interface import ph4
 
 sys.setrecursionlimit(10000)
 
@@ -61,41 +62,35 @@ def amuse_cluster(filename, galaxy_filename,data):
 
         # compute who is bound and who isn't - note this is for old version where the code hasn't already done this for us
         converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
+        # define a fastkick instance that we will use for all our potential calculations
+        computer = ph4(converter, number_of_workers=23)
+        computer.particles.add_particles(cluster)
+
+        binaries= computer.particles.get_binaries(hardness=5)
+        print("number of binaries", len(binaries))
         while True:
             # the particles in the framework that are currently defined as bound
             # find the centre of mass
-            core = cluster.cluster_core(converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
-            position=cluster.position-core.position
+            core = computer.particles.cluster_core(converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
+            position=computer.particles.position-core.position
             r2=position.lengths_squared()
 
             # find the particles outside the tidal radius - only compute energy of these
-            tidal_radius = gal_field.tidal_radius(4|units.pc, core.position.x, core.position.y, core.position.z, cluster.total_mass())
+            tidal_radius = gal_field.tidal_radius(4|units.pc, core.position.x, core.position.y, core.position.z, computer.particles.total_mass())
            
-
-            outside = cluster[r2 > tidal_radius**2]
+            outside = computer.particles[r2 > tidal_radius**2]
             if len(outside) == 0:
                 break
 
-            # compute total energies of these particles 
-            energies = [] | units.erg
-            for particle in outside:
-                calc = Particles()
-                calc.add_particle(particle.copy())
-                # remove it from the set so it is not included in potential calculation
-                cluster.remove_particles(calc)
-                # determine total energy
-                kinetic = 0.5*calc.mass*(calc.velocity-core.velocity).lengths()**2
-                potential = calc.potential_energy_in_field(field_particles=cluster)
-                energies.append(kinetic+potential)
-                # add it back in so it is included in calculation for next particle
-                cluster.add_particles(calc)
-                
+            energies = 0.5*(outside.velocity-core.velocity).lengths()**2 + outside.potential_in_code
+            a_max = energies.argmax()
             # remove the particle with the highest positive energy - if all negative then break
-            if energies.max() > 0 | units.erg:
+            if energies[a_max] > 0 | units.erg/units.kg:
                 # update the unbound particles
-                to_remove = outside[energies.argmax()]
+                to_remove = outside[a_max]
                 unbound_particles.add_particle(to_remove)
                 cluster.remove_particle(to_remove)
+                computer.particles.remove_particle(to_remove)
             else:
                 break
 
@@ -111,11 +106,7 @@ def amuse_cluster(filename, galaxy_filename,data):
         rhalf = cluster.LagrangianRadii(mf=[0.5])[0][0]
         data['rhalf'].append(rhalf)
         
-        # this could happen in parallel - would need threadfence at end
-        scaler = FastKick(converter, number_of_workers=20)
-        scaler.particles.add_particles(cluster)
-        potential_energy = scaler.get_potential_energy()
-        scaler.stop()
+        potential_energy = (computer.particles.mass*computer.particles.potential_in_code).sum()
 
         inside = cluster.position.lengths() < rhalf
         E = cluster.kinetic_energy() + potential_energy
