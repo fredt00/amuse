@@ -309,50 +309,47 @@ class star_cluster(tidal_field):
         self.model_time = tend
 
     def transfer_unbound_particles(self):
-        # transfer unbound particles to the unbound code
-        # current_framework_bound = self.particles[self.particles.unbound_time == -1 |units.Myr]
-        # CoM = current_framework_bound.center_of_mass()
-        # bound_subset = current_framework_bound.bound_subset(unit_converter=self.converter,tidal_radius=self.tidal_radius(4|units.pc, CoM.x, CoM.y, CoM.z, current_framework_bound.total_mass()), strict=True)
-        # new_unbound = current_framework_bound.difference(bound_subset)
-        # # remove=new_unbound#[new_unbound.escape_flag]# remove only particles not already removed
-        # # update escape flag for particles that were not unbound last tstep but are now
-        # # new_unbound.escape_flag = True
-        # new_unbound.unbound_time = self.model_time
-        # self.unbound.particles.add_particles(new_unbound)
-        # self.bound.particles.remove_particles(new_unbound)
-        # # redeifine channel just in case?
-        # self.u2f = self.unbound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
-        # self.b2f = self.bound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
-        # self.f2b = self.particles.new_channel_to(self.bound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
-        # self.f2u = self.particles.new_channel_to(self.unbound.particles, attributes=['mass', 'radius', 'x', 'y', 'z', 'vx', 'vy', 'vz'])
-
-
         ######### NEW ATTEMPT
         # This must be recursive - we compute the energy of all particles outside the tidal radius and remove the highest +ve energy one - then recompute energy of all outside the new tidal radius etc. repeat until no particles are removed
-        while True:
-            core = self.bound.particles.cluster_core(self.converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
-            position=self.bound.particles.position-core.position
-            r2=position.lengths_squared()
+        # while True:
+        #     core = self.bound.particles.cluster_core(self.converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
+        #     position=self.bound.particles.position-core.position
+        #     r2=position.lengths_squared()
 
-            # find the particles outside the tidal radius - only compute energy of these
-            tidal_radius = self.tidal_radius(4|units.pc, core.position.x, core.position.y, core.position.z, self.bound.particles.total_mass())
-            outside = self.bound.particles[r2 > tidal_radius**2]
-            if len(outside) == 0:
-                break
+        #     # find the particles outside the tidal radius - only compute energy of these
+        #     tidal_radius = self.tidal_radius(4|units.pc, core.position.x, core.position.y, core.position.z, self.bound.particles.total_mass())
+        #     outside = self.bound.particles[r2 > tidal_radius**2]
+        #     if len(outside) == 0:
+        #         break
 
-            # compute total energies of these particles 
-            energies = 0.5*(outside.velocity-core.velocity).lengths()**2 + self.bound.get_potential(outside.index_in_code)
-            a_max = energies.argmax()
-            # remove the particle with the highest positive energy - if all negative then break
-            if energies[a_max] > 0 | units.erg/units.kg:
-                # update the unbound particles
-                to_remove = outside[a_max]
-                self.particles[self.particles.key==to_remove.key].unbound_time = self.model_time
-                self.unbound.particles.add_particle(to_remove)
-                self.bound.particles.remove_particle(to_remove)
-            else:
-                break
+        #     # compute total energies of these particles 
+        #     energies = 0.5*(outside.velocity-core.velocity).lengths()**2 + self.bound.get_potential(outside.index_in_code)
+        #     a_max = energies.argmax()
+        #     # remove the particle with the highest positive energy - if all negative then break
+        #     if energies[a_max] > 0 | units.erg/units.kg:
+        #         # update the unbound particles
+        #         to_remove = outside[a_max]
+        #         self.particles[self.particles.key==to_remove.key].unbound_time = self.model_time
+        #         self.unbound.particles.add_particle(to_remove)
+        #         self.bound.particles.remove_particle(to_remove)
+        #     else:
+        #         break
         
+        # for now lets do what petar does which is remove all particles outside 20rh - quick and conservative
+        core = self.bound.particles.cluster_core(self.converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
+        position=self.bound.particles.position-core.position
+        r2=position.lengths_squared()
+        tidal_radius = 20*self.half_mass_radius()
+        print(tidal_radius.in_(units.pc))
+        new_outside = self.bound.particles[r2 > tidal_radius**2]#.difference(self.unbound.particles).copy()
+        # new_inside = self.particles[r2 <= tidal_radius**2]#.difference(self.bound.particles).copy()
+        # print(new_outside)
+        # print(new_inside)
+        # self.bound.particles.add_particles(new_inside)
+        self.bound.particles.remove_particles(new_outside)
+        # self.unbound.particles.add_particles(new_outside)
+        self.unbound.particles.remove_particles(new_outside)
+
         # redefine channels
         self.u2f = self.unbound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
         self.b2f = self.bound.particles.new_channel_to(self.particles, attributes=['x', 'y', 'z', 'vx', 'vy', 'vz'])
