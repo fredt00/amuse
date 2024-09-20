@@ -302,7 +302,7 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
     sys.stdout.flush()
     # evolve the bridge to the requested time
     while integrator.time < t_end:
-        cluster.transfer_unbound_particles()
+        if not cluster_model: cluster.transfer_unbound_particles()
         integrator.evolve_model(integrator.time+dt)
         print('evolved to', integrator.time.in_(units.Myr)) 
         # save output
