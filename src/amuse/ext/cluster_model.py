@@ -67,10 +67,10 @@ class internal_dynamics(tidal_field):
     def __init__(self, N, mbar, mbar_se, half_mass_radius, kappa, M_seg, n_trhp, particles, grav_instance, stellar_evolution, VG, time, no_core_collapse):
         
         # turn core collapse evolution on/off depending on nc
-        if no_core_collapse:
-            global nc
-            nc = 0
-
+        # if no_core_collapse:
+        #     global nc
+        #     nc = 0
+        self.no_core_collapse = no_core_collapse
         super().__init__(grav_instance)
         
         self.VG = VG
@@ -163,7 +163,7 @@ class internal_dynamics(tidal_field):
         F=0.
         if nc/2<self.n_trhp <= nc:
             F = 2.*self.n_trhp/nc - 1.
-        if self.n_trhp > nc:
+        if self.n_trhp > nc or self.no_core_collapse:
             F=1.
         return F
     
@@ -195,11 +195,13 @@ class internal_dynamics(tidal_field):
         lambd=0.
         if self.n_trhp > 0.5*nc:
             lambd += (kappa_1 - self.kappa) * (2*self.n_trhp/nc - 1)
+        if self.no_core_collapse:
+            lambd = 0
         return lambd
     
     def epsilon(self):
         epsilon=0.
-        if self.n_trhp > nc:
+        if self.n_trhp > nc or self.no_core_collapse:
             epsilon=zeta
         elif self.model_time > main_sequence_lifetime_m_up:
             epsilon = self.M_seg*self.gamma_se() + self.tidal_escape()
