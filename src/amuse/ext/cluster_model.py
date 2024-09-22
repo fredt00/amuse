@@ -64,10 +64,10 @@ global y
 y = -0.3
 
 class internal_dynamics(tidal_field):
-    def __init__(self, N, mbar, mbar_se, half_mass_radius, kappa, M_seg, n_trhp, particles, grav_instance, stellar_evolution, VG, time, core_collapse):
+    def __init__(self, N, mbar, mbar_se, half_mass_radius, kappa, M_seg, n_trhp, particles, grav_instance, stellar_evolution, VG, time, no_core_collapse):
         
         # turn core collapse evolution on/off depending on nc
-        if not core_collapse:
+        if no_core_collapse:
             global nc
             nc = 0
 
@@ -271,7 +271,7 @@ class internal_dynamics(tidal_field):
 # - add a unit converter to the class
 class star_cluster_particle(internal_dynamics):
     def __init__(self, N=None, mass=None, half_mass_radius=4.35 | units.pc, kappa=0.2, M_seg=3, mbar=None, mbar_se=None, n_trhp=0,
-                 position=None, velocity=None, grav_instance=None, stellar_evolution=True, VG=None, time = 0 | units.Myr, core_collapse=True):
+                 position=None, velocity=None, grav_instance=None, stellar_evolution=True, VG=None, time = 0 | units.Myr, no_core_collapse=False):
         
         # set up initial conditions accounting for restarts
         if not mbar:
@@ -303,7 +303,7 @@ class star_cluster_particle(internal_dynamics):
 
         # if tidal field is present
         super().__init__(N=mass/mbar, mbar = mbar, mbar_se=mbar_se,half_mass_radius=half_mass_radius, kappa=kappa, M_seg=M_seg, n_trhp=n_trhp, particles=particles,
-                            grav_instance=grav_instance, stellar_evolution=stellar_evolution, VG=VG, time=time, core_collapse=core_collapse)
+                            grav_instance=grav_instance, stellar_evolution=stellar_evolution, VG=VG, time=time, no_core_collapse=no_core_collapse)
     
 
     def evolve_model(self, tend):
