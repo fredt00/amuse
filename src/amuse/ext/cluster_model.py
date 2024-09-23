@@ -64,13 +64,14 @@ global y
 y = -0.3
 
 class internal_dynamics(tidal_field):
-    def __init__(self, N, mbar, mbar_se, half_mass_radius, kappa, M_seg, n_trhp, particles, grav_instance, stellar_evolution, VG, time, no_core_collapse):
+    def __init__(self, N, mbar, mbar_se, half_mass_radius, kappa, M_seg, n_trhp, particles, grav_instance, stellar_evolution, VG, time, no_core_collapse, rtidal_from_pot):
         
         # turn core collapse evolution on/off depending on nc
         # if no_core_collapse:
         #     global nc
         #     nc = 0
         self.no_core_collapse = no_core_collapse
+        self.rtidal_from_pot = rtidal_from_pot
         super().__init__(grav_instance)
         
         self.VG = VG
@@ -109,8 +110,17 @@ class internal_dynamics(tidal_field):
         MG = RG*self.VG**2/constants.G#9.53e+10 | units.MSun
         return pow((self.N*self.mbar)/(2.0*MG),(1.0/3.0))*RG
 
+    # tidal radius by estimating enclosed mass on circular orbit (this is what petar data analysis does)
+    def mass_est_rtidal(self):
+        r = self.particles.position.lengths()[0]
+        m = self.N*self.mbar
+        Mgal = -self.grav_instance.get_potential_at_point(0 | units.pc,self.particles.position[0].x,self.particles.position[0].y,self.particles.position[0].z)* r/constants.G
+        return r*pow(m/(2.0*Mgal),1.0/3.0) # 2 for continuous, 3 for point mass
+    
     def rtidal(self):
-        if self.grav_instance:
+        if self.rtidal_from_pot:
+            return self.mass_est_rtidal()
+        elif self.grav_instance:
             return self.tidal_radius(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
                                         self.particles.position[0].z, self.particles.mass[0])
         elif self.VG:
@@ -273,7 +283,7 @@ class internal_dynamics(tidal_field):
 # - add a unit converter to the class
 class star_cluster_particle(internal_dynamics):
     def __init__(self, N=None, mass=None, half_mass_radius=4.35 | units.pc, kappa=0.2, M_seg=3, mbar=None, mbar_se=None, n_trhp=0,
-                 position=None, velocity=None, grav_instance=None, stellar_evolution=True, VG=None, time = 0 | units.Myr, no_core_collapse=False):
+                 position=None, velocity=None, grav_instance=None, stellar_evolution=True, VG=None, time = 0 | units.Myr, no_core_collapse=False, rtidal_from_pot=False):
         
         # set up initial conditions accounting for restarts
         if not mbar:
@@ -305,7 +315,7 @@ class star_cluster_particle(internal_dynamics):
 
         # if tidal field is present
         super().__init__(N=mass/mbar, mbar = mbar, mbar_se=mbar_se,half_mass_radius=half_mass_radius, kappa=kappa, M_seg=M_seg, n_trhp=n_trhp, particles=particles,
-                            grav_instance=grav_instance, stellar_evolution=stellar_evolution, VG=VG, time=time, no_core_collapse=no_core_collapse)
+                            grav_instance=grav_instance, stellar_evolution=stellar_evolution, VG=VG, time=time, no_core_collapse=no_core_collapse, rtidal_from_pot=rtidal_from_pot)
     
 
     def evolve_model(self, tend):

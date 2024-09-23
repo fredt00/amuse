@@ -154,7 +154,7 @@ def setup_cluster_from_file(cluster_file, cluster_file_type, restart_time=0 | un
 
 def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_position, initial_velocity, Vcirc_fraction, cluster_model,
                        cluster_file, cluster_file_type, restart_time, stellar_evolution, galaxy, analytic, dt,
-                         star_cluster_number_of_workers, no_core_collapse):
+                         star_cluster_number_of_workers, no_core_collapse, rtidal_from_pot):
     # default to solar
     if len(initial_position)==0: initial_position = [8,0,0] 
     if len(initial_velocity)==0: initial_velocity = [0,220,0]
@@ -178,7 +178,7 @@ def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_positio
     converter = nbody_system.nbody_to_si(M_cluster, dt)
 
     if cluster_model:
-        cluster = star_cluster_particle(N=N_cluster, mass=M_cluster,half_mass_radius=r_half, position=Rinit, velocity=Vinit, grav_instance=galaxy, stellar_evolution=stellar_evolution, no_core_collapse=no_core_collapse)
+        cluster = star_cluster_particle(N=N_cluster, mass=M_cluster,half_mass_radius=r_half, position=Rinit, velocity=Vinit, grav_instance=galaxy, stellar_evolution=stellar_evolution, no_core_collapse=no_core_collapse, rtidal_from_pot=rtidal_from_pot)
     else:
         cluster_particles = None
         if stellar_evolution: stellar_evolution=SSE
@@ -192,7 +192,7 @@ def configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_positio
             cluster.particles.velocity += Vinit
     return cluster, Rinit, Vinit
 
-def restart_cluster_model(restart_file, restart_time, gravity, no_core_collapse):
+def restart_cluster_model(restart_file, restart_time, gravity, no_core_collapse, rtidal_from_pot):
     filename = 'cluster_'+restart_file+".txt"
     print('reading in cluster model IC from ' + filename)
     data = np.genfromtxt(filename)
@@ -207,7 +207,7 @@ def restart_cluster_model(restart_file, restart_time, gravity, no_core_collapse)
     kappa = data[select,13][0]
     M_seg = data[select,14][0]
     cluster = star_cluster_particle(N=N,mass= None, half_mass_radius=half_mass_radius, kappa=kappa,M_seg= M_seg, mbar=mbar, mbar_se=mbar_se, n_trhp=n_trhp,
-                                    position= position, velocity=velocity, grav_instance=gravity, stellar_evolution=True, VG=None, time=restart_time, no_core_collapse=no_core_collapse)
+                                    position= position, velocity=velocity, grav_instance=gravity, stellar_evolution=True, VG=None, time=restart_time, no_core_collapse=no_core_collapse, rtidal_from_pot=rtidal_from_pot)
     return cluster
     
 # The main function that sets up the simulation and evolves it
@@ -216,7 +216,7 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
             output_interval=20 | units.Myr, t_settle = 1 | units.Gyr, initial_position = [], initial_velocity = [], Vcirc_fraction = None,
             eps_gal_to_clu = 100 | units.pc, dt=1.0|units.Myr, galaxy_file = None, galaxy_file_type = "hdf5",cluster_model = False, cluster_file = None,
             cluster_file_type='hdf5', restart_time = 0 | units.Myr, df_model=False, analytic=False, 
-            stellar_evolution=False, potential_option='MWpotentialBovy2015', potential_parameters = [], potential_units = [], no_core_collapse=False):
+            stellar_evolution=False, potential_option='MWpotentialBovy2015', potential_parameters = [], potential_units = [], no_core_collapse=False, rtidal_from_pot=False):
     # check input options
     print('Your specified options are', locals())
 
@@ -234,11 +234,11 @@ def main(star_cluster_number_of_workers = 2, galaxy_force_number_of_workers = 0,
     
     # set up the cluster - new IC or read in
     if restart_file and cluster_model:
-        cluster = restart_cluster_model(restart_file, restart_time, galaxy, no_core_collapse)
+        cluster = restart_cluster_model(restart_file, restart_time, galaxy, no_core_collapse, rtidal_from_pot)
     else:
         cluster, Rinit, Vinit = configure_cluster(N_cluster, M_cluster, W0, r_half, r_tidal, initial_position, initial_velocity, Vcirc_fraction, cluster_model,
                         cluster_file, cluster_file_type, restart_time, stellar_evolution, galaxy, analytic, dt,
-                            star_cluster_number_of_workers, no_core_collapse)
+                            star_cluster_number_of_workers, no_core_collapse, rtidal_from_pot)
 
     if df_model:
         if cluster_model:
@@ -381,6 +381,8 @@ def new_argument_parser():
                         help="use subgrid cluster model from EMACSS + shocks? (default: %(default)s)")
     result.add_argument("--no_core_collapse", dest="no_core_collapse", action='store_true',
                       help="assume already core collapsed? (default: %(default)s)")
+    result.add_argument("--rtidal_from_pot", dest="rtidal_from_pot", action='store_true',
+                      help="compute tidal radius for cluster model by the formula assuming circular orbit and mass enclosed? (default: %(default)s)")
 
     # pre defined IC
     result.add_argument("--cluster_file", dest="cluster_file", default = None,
