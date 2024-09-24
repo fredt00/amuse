@@ -124,7 +124,7 @@ class tidal_field(object):
     
     def tidal_radius(self, scale, x, y, z, satellite_mass):
         eigenvalues = self.tidal_tensor_eigenvalues(scale, x, y, z)
-        max_eigenvalue = np.max(np.abs(eigenvalues))
+        max_eigenvalue = eigenvalues.max() # note we had an abs in here before which was an error
         omegasq = np.abs(eigenvalues.sum())/3
         T = max_eigenvalue + omegasq
         return (constants.G * satellite_mass/T)**(1/3)
@@ -137,6 +137,70 @@ class tidal_field(object):
         eigenvalues, _ = np.linalg.eig(tidal_tensor)
         eigenvalues = eigenvalues | units.gyr**-2
         return eigenvalues
+    
+
+    # new routines using potential
+    def get_tidalfield_at_point_pot(self,scale,x,y,z):
+        h = scale
+        # on axis terms
+        phi_x0 = self.grav_instance.get_potential_at_point(0 | units.pc, x, y, z)
+        phi_px = self.grav_instance.get_potential_at_point(0 | units.pc, x+h, y, z)
+        phi_mx = self.grav_instance.get_potential_at_point(0 | units.pc, x-h, y, z)
+        phi_py = self.grav_instance.get_potential_at_point(0 | units.pc, x, y+h, z)
+        phi_my = self.grav_instance.get_potential_at_point(0 | units.pc, x, y-h, z)
+        phi_pz = self.grav_instance.get_potential_at_point(0 | units.pc, x, y, z+h)
+        phi_mz = self.grav_instance.get_potential_at_point(0 | units.pc, x, y, z-h)
+
+        Txx = -(phi_px-2*phi_x0+phi_mx)/h**2
+        Tyy = -(phi_py-2*phi_x0+phi_my)/h**2
+        Tzz = -(phi_pz-2*phi_x0+phi_mz)/h**2
+
+        # off axis terms
+        phi_pxpy = self.grav_instance.get_potential_at_point(0 | units.pc, x+h, y+h, z)
+        phi_mxmy = self.grav_instance.get_potential_at_point(0 | units.pc, x-h, y-h, z)
+        phi_pxmy = self.grav_instance.get_potential_at_point(0 | units.pc, x+h, y-h, z)
+        phi_mxpy = self.grav_instance.get_potential_at_point(0 | units.pc, x-h, y+h, z)
+
+        phi_pxpz = self.grav_instance.get_potential_at_point(0 | units.pc, x+h, y, z+h)
+        phi_mxmz = self.grav_instance.get_potential_at_point(0 | units.pc, x-h, y, z-h)
+        phi_pxmz = self.grav_instance.get_potential_at_point(0 | units.pc, x+h, y, z-h)
+        phi_mxpz = self.grav_instance.get_potential_at_point(0 | units.pc, x-h, y, z+h)
+
+        phi_pypz = self.grav_instance.get_potential_at_point(0 | units.pc, x, y+h, z+h)
+        phi_mymz = self.grav_instance.get_potential_at_point(0 | units.pc, x, y-h, z-h)
+        phi_pymz = self.grav_instance.get_potential_at_point(0 | units.pc, x, y+h, z-h)
+        phi_mypz = self.grav_instance.get_potential_at_point(0 | units.pc, x, y-h, z+h)
+
+        Txy = -(phi_pxpy + phi_mxmy - phi_pxmy - phi_mxpy)/(4*h**2)
+        Txz = -(phi_pxpz + phi_mxmz - phi_pxmz - phi_mxpz)/(4*h**2)
+        Tyz = -(phi_pypz + phi_mymz - phi_pymz - phi_mypz)/(4*h**2)
+        return Txx,Tyy,Tzz,Txy,Txz,Tyz
+    
+    def get_tidalfield_at_point_pot_per_gyr_sq(self,scale,x,y,z):
+        h = scale
+        Txx,Tyy,Tzz,Txy,Txz,Tyz=self.get_tidalfield_at_point_pot(h,x,y,z)
+        Txx=Txx.value_in(units.gyr**-2)
+        Tyy=Tyy.value_in(units.gyr**-2)
+        Tzz=Tzz.value_in(units.gyr**-2)
+        Txy=Txy.value_in(units.gyr**-2)
+        Txz=Txz.value_in(units.gyr**-2)
+        Tyz=Tyz.value_in(units.gyr**-2)
+        return Txx,Tyy,Tzz,Txy,Txz,Tyz
+    def tidal_tensor_eigenvalues_pot(self, scale, x, y, z):
+        Txx, Tyy, Tzz, Txy, Txz, Tyz = self.get_tidalfield_at_point_pot_per_gyr_sq(scale, x, y, z)
+        tidal_tensor = np.array([[Txx, Txy, Txz],
+                                [Txy, Tyy, Tyz],
+                                [Txz, Tyz, Tzz]])
+        eigenvalues, _ = np.linalg.eig(tidal_tensor)
+        eigenvalues = eigenvalues | units.gyr**-2
+        return eigenvalues
+    
+    def tidal_radius_pot(self, scale, x, y, z, satellite_mass):
+        eigenvalues = self.tidal_tensor_eigenvalues_pot(scale, x, y, z)
+        max_eigenvalue = eigenvalues.max() # error here!! this should just be np.max(evalues)
+        omegasq = np.abs(eigenvalues.sum())/3
+        T = max_eigenvalue + omegasq
+        return (constants.G * satellite_mass/T)**(1/3)
 
 # create a wrapper class for a gravity code to describe a star cluster including bound and unbound particles and stellar evolution
 class star_cluster(tidal_field):
@@ -340,7 +404,7 @@ class star_cluster(tidal_field):
         position=self.bound.particles.position-core.position
         r2=position.lengths_squared()
         tidal_radius = 20*self.half_mass_radius()
-        print(tidal_radius.in_(units.pc))
+        # print(tidal_radius.in_(units.pc))
         new_outside = self.bound.particles[r2 > tidal_radius**2]#.difference(self.unbound.particles).copy()
         # new_inside = self.particles[r2 <= tidal_radius**2]#.difference(self.bound.particles).copy()
         # print(new_outside)
