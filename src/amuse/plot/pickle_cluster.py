@@ -42,86 +42,6 @@ sys.setrecursionlimit(10000)
 
 # in case of petar files
 
-def amuse_cluster(filename, galaxy_filename,data):
-    print('about to read '+ filename)
-    data_cluster = io.read_set_from_file(filename, close_file=True)
-    # data_galaxy = io.read_set_from_file(galaxy_filename, close_file=True)
-    i=0
-    unbound_particles = Particles()
-    for cluster in data_cluster.history:
-        t_snap = cluster.get_timestamp().in_(units.Myr)
-        if t_snap==460|units.Myr: continue # skip problem for now
-        print(t_snap.in_(units.Myr))
-
-        
-        galaxy_force_field = MWpotentialBovy2015()
-        
-        gal_field = tidal_field(galaxy_force_field)
-        # remove previous unbound particles
-        print("pre removal", len(cluster))
-        cluster.remove_particles(unbound_particles)
-        if len(cluster) <100:
-            break
-        print("post removal", len(cluster))
-        # compute who is bound and who isn't - note this is for old version where the code hasn't already done this for us
-        converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
-
-        # define a fastkick instance that we will use for all our potential calculations
-        computer = ph4(converter, number_of_workers=23)
-        computer.particles.add_particles(cluster)
-
-        binaries= computer.particles.get_binaries(hardness=5)
-        print("number of binaries", len(binaries))
-        while True:
-            # the particles in the framework that are currently defined as bound
-            # find the centre of mass
-            core = computer.particles.cluster_core(converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
-            position=computer.particles.position-core.position
-            r2=position.lengths_squared()
-
-            # find the particles outside the tidal radius - only compute energy of these
-            tidal_radius = gal_field.tidal_radius(4|units.pc, core.position.x, core.position.y, core.position.z, computer.particles.total_mass())
-           
-            outside = computer.particles[r2 > tidal_radius**2]
-            if len(outside) == 0:
-                break
-
-            energies = 0.5*(outside.velocity-core.velocity).lengths()**2 + outside.potential_in_code
-            a_max = energies.argmax()
-            # remove the particle with the highest positive energy - if all negative then break
-            if energies[a_max] > 0 | units.erg/units.kg:
-                # update the unbound particles
-                to_remove = outside[a_max]
-                unbound_particles.add_particle(to_remove)
-                cluster.remove_particle(to_remove)
-                computer.particles.remove_particle(to_remove)
-            else:
-                break
-
-        print("number of bound particles", len(cluster))
-        print("number of unbound particles", len(unbound_particles))
-
-        data['time'].append(t_snap)
-        data['mass'].append(cluster.mass.sum())
-        data['mean_mass'].append(cluster.mass.mean())
-        data['galactocentric_radius'].append(cluster.center_of_mass().length())
-
-        cluster.move_to_center()
-        rhalf = cluster.LagrangianRadii(mf=[0.5])[0][0]
-        data['rhalf'].append(rhalf)
-        
-        # this could happen in parallel - would need threadfence at end
-        potential_energy = (computer.particles.mass*computer.particles.potential_in_code).sum()
-      
-
-        inside = cluster.position.lengths() < rhalf
-        E = cluster.kinetic_energy() + potential_energy
-        data["E"].append(E)
-        data['psi'].append((cluster.mass[inside]**(5/2)).mean()/cluster.mass[inside].mean()**(5/2))
-        data['kappa'].append(-E*rhalf/(constants.G*cluster.mass.sum()**2))
-        computer.stop()
-    return data
-
 def amuse_cluster_new(filename, galaxy_filename,data):
     print('about to read '+ filename)
     data_cluster = io.read_set_from_file(filename, close_file=True)
@@ -162,7 +82,7 @@ def amuse_cluster_new(filename, galaxy_filename,data):
         tidal_radius = gal_field.tidal_radius(4|units.pc, core.position.x, core.position.y, core.position.z, computer.particles.total_mass())
         print("from tensor", tidal_radius.in_(units.pc))
         print("from potential", tidal_radius_phi.in_(units.pc))
-        tidal_radius_old = tidal_radius
+        tidal_radius_old = tidal_radius*1.2
         while ((tidal_radius_old-tidal_radius)/tidal_radius_old>1e-2):
             tidal_radius_old = tidal_radius
             rt2 = tidal_radius*tidal_radius
