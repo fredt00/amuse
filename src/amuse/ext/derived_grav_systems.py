@@ -298,17 +298,17 @@ class star_cluster(tidal_field):
         if self.stellar_evolution:
             dt = tend - self.bound.model_time
 
-            # self.f2s.copy()
-            # self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
-            # self.s2f.copy()
+            self.f2s.copy()
+            self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
+            self.s2f.copy()
 
-            # self.f2b.copy()
-            # self.bound.evolve_model(tend)
-            # self.b2f.copy()
+            self.f2b.copy()
+            self.bound.evolve_model(tend)
+            self.b2f.copy()
 
-            # self.f2s.copy()
-            # self.stellar_evolution.evolve_model(self.bound.model_time)
-            # self.s2f.copy()
+            self.f2s.copy()
+            self.stellar_evolution.evolve_model(self.bound.model_time)
+            self.s2f.copy()
 
             # Below is for a variable timestep - does not sees necessaty
 
@@ -316,61 +316,61 @@ class star_cluster(tidal_field):
             # also it seems petar can't handle dt_soft below a certain value for a given system - perhaps when we approach similar timesteps
             # to the hermite scheme or binary periods? or it could just be rounding errors from all the conversions going on
             # either way we will set the minimum timestep to 0.5**15 for now (this does depend on the converter used though)
-            maximum_n_allowed = 17
-            initial_n_for_dt_soft = math.ceil(math.log(self.converter.to_nbody(self.bound.parameters.dt_soft).number, 0.5))
-            maximum_n_for_dt_soft = initial_n_for_dt_soft
-            dt = self.stellar_evolution.particles.time_step.min()
-            while dt<(tend-self.bound.model_time):
+            # maximum_n_allowed = 17
+            # initial_n_for_dt_soft = math.ceil(math.log(self.converter.to_nbody(self.bound.parameters.dt_soft).number, 0.5))
+            # maximum_n_for_dt_soft = initial_n_for_dt_soft
+            # dt = self.stellar_evolution.particles.time_step.min()
+            # while dt<(tend-self.bound.model_time):
 
-                # compute the integer timestep just below the minimum SE timestep
-                dt_se_nbody = self.converter.to_nbody(dt).number
-                n_min_se_time_step = math.ceil(math.log(dt_se_nbody, 0.5))
-                if n_min_se_time_step > maximum_n_allowed:
-                    n_min_se_time_step = maximum_n_allowed
-                dt = self.converter.to_si(0.5**n_min_se_time_step | nbody_system.time)
+            #     # compute the integer timestep just below the minimum SE timestep
+            #     dt_se_nbody = self.converter.to_nbody(dt).number
+            #     n_min_se_time_step = math.ceil(math.log(dt_se_nbody, 0.5))
+            #     if n_min_se_time_step > maximum_n_allowed:
+            #         n_min_se_time_step = maximum_n_allowed
+            #     dt = self.converter.to_si(0.5**n_min_se_time_step | nbody_system.time)
 
-                self.f2s.copy()
-                self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
-                self.s2f.copy()
+            #     self.f2s.copy()
+            #     self.stellar_evolution.evolve_model(self.bound.model_time+dt/2)
+            #     self.s2f.copy()
                 
 
-                # may need to adjust dt_soft in petar to capture this timescale - stay in integer exponent!
-                if n_min_se_time_step > initial_n_for_dt_soft:
-                    self.bound.parameters.dt_soft=dt # petar can take nbody or SI units
-                    maximum_n_for_dt_soft = max(n_min_se_time_step, maximum_n_for_dt_soft)
-                    current_n_for_dt_soft = n_min_se_time_step
-                else:
-                    self.bound.parameters.dt_soft=0.5**initial_n_for_dt_soft | nbody_system.time
+            #     # may need to adjust dt_soft in petar to capture this timescale - stay in integer exponent!
+            #     if n_min_se_time_step > initial_n_for_dt_soft:
+            #         self.bound.parameters.dt_soft=dt # petar can take nbody or SI units
+            #         maximum_n_for_dt_soft = max(n_min_se_time_step, maximum_n_for_dt_soft)
+            #         current_n_for_dt_soft = n_min_se_time_step
+            #     else:
+            #         self.bound.parameters.dt_soft=0.5**initial_n_for_dt_soft | nbody_system.time
 
-                self.f2b.copy()
-                self.bound.evolve_model(self.bound.model_time+dt)
-                self.b2f.copy()
+            #     self.f2b.copy()
+            #     self.bound.evolve_model(self.bound.model_time+dt)
+            #     self.b2f.copy()
 
-                self.f2s.copy()
-                self.stellar_evolution.evolve_model(self.bound.model_time)
-                self.s2f.copy()
+            #     self.f2s.copy()
+            #     self.stellar_evolution.evolve_model(self.bound.model_time)
+            #     self.s2f.copy()
 
-                dt = self.stellar_evolution.particles.time_step.min()
+            #     dt = self.stellar_evolution.particles.time_step.min()
 
-            # evolve by whatever time is left in the bridge timestep
-            remaining_time = tend-self.bound.model_time
+            # # evolve by whatever time is left in the bridge timestep
+            # remaining_time = tend-self.bound.model_time
 
-            self.f2s.copy()
-            self.stellar_evolution.evolve_model(self.bound.model_time+remaining_time/2)
-            self.s2f.copy()
+            # self.f2s.copy()
+            # self.stellar_evolution.evolve_model(self.bound.model_time+remaining_time/2)
+            # self.s2f.copy()
    
-            self.bound.parameters.dt_soft = self.converter.to_si(0.5**maximum_n_for_dt_soft | nbody_system.time)
-            self.f2b.copy()
-            self.bound.evolve_model(self.bound.model_time+remaining_time)
-            self.b2f.copy()
+            # self.bound.parameters.dt_soft = self.converter.to_si(0.5**maximum_n_for_dt_soft | nbody_system.time)
+            # self.f2b.copy()
+            # self.bound.evolve_model(self.bound.model_time+remaining_time)
+            # self.b2f.copy()
 
-            self.f2s.copy()
-            self.stellar_evolution.evolve_model(tend)
-            self.s2f.copy()
+            # self.f2s.copy()
+            # self.stellar_evolution.evolve_model(tend)
+            # self.s2f.copy()
 
-            # reset the tree timestep to autodetermination
-            self.bound.parameters.dt_soft=0 | units.Myr
-            self.bound.evolve_model(self.bound.model_time)
+            # # reset the tree timestep to autodetermination
+            # self.bound.parameters.dt_soft=0 | units.Myr
+            # self.bound.evolve_model(self.bound.model_time)
 
         else:
 
@@ -414,7 +414,8 @@ class star_cluster(tidal_field):
         core = self.bound.particles.cluster_core(self.converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
         position=self.bound.particles.position-core.position
         r2=position.lengths_squared()
-        tidal_radius = 20*self.half_mass_radius()
+        # tidal_radius = 20*self.half_mass_radius()
+        tidal_radius = 400 | units.pc # try to remove extreme escapers for now
         # print(tidal_radius.in_(units.pc))
         new_outside = self.bound.particles[r2 > tidal_radius**2]#.difference(self.unbound.particles).copy()
         # new_inside = self.particles[r2 <= tidal_radius**2]#.difference(self.bound.particles).copy()
