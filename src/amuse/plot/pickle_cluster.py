@@ -60,7 +60,7 @@ def convert_inputs_to_galactic_potential(potential_option, potential_parameters,
     converted_parameters = potential_parameters
     for i in range(len(potential_parameters)):
         converted_parameters[i] = potential_parameters[i] | unit_converter[potential_units[i]]
-    return getattr(galactic_potentials, potential_option)(*potential_parameters)
+    return getattr(galactic_potentials, potential_option)(*converted_parameters)
 
 def amuse_cluster_new(filename, galaxy_filename,data, potential_option, potential_parameters, potential_units):
     print('about to read '+ filename)
