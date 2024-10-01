@@ -89,7 +89,7 @@ def amuse_cluster_new(filename, galaxy_filename,data, potential_option, potentia
         converter= nbody_system.nbody_to_si(cluster.total_mass(), cluster.total_radius())
 
         # define a fastkick instance that we will use for all our potential calculations
-        computer = ph4(converter, number_of_workers=23)
+        computer = ph4(converter, number_of_workers=1)
         computer.particles.add_particles(cluster)
         # may need to set zero step mode for correct potential calculation
             # the particles in the framework that are currently defined as bound
