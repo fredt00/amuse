@@ -57,7 +57,7 @@ def convert_inputs_to_galactic_potential(potential_option, potential_parameters,
         return getattr(galactic_potentials, potential_option)()
 
     unit_converter = {'kpc': units.kpc, 'MSun/kpc3': units.MSun/units.kpc**3, 'MSun': units.MSun, 'None': units.none}
-    converted_parameters = potential_parameters
+    converted_parameters = potential_parameters.copy()
     for i in range(len(potential_parameters)):
         converted_parameters[i] = potential_parameters[i] | unit_converter[potential_units[i]]
     return getattr(galactic_potentials, potential_option)(*converted_parameters)
