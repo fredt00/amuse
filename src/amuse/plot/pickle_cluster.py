@@ -28,6 +28,7 @@ import argparse
 from amuse.datamodel.particle_attributes import HopContainer
 import amuse.ext.galactic_potentials as galactic_potentials
 import inspect
+
 sys.setrecursionlimit(10000)
 
 # import petar
@@ -133,7 +134,12 @@ def amuse_cluster_new(filename, galaxy_filename,data, potential_option, potentia
         
         # this could happen in parallel - would need threadfence at end
         computer.particles.move_to_center()
-        potential_energy = (computer.particles.mass*computer.particles.potential_in_code).sum()
+
+        # something weird is going on with the potential energy calculation here, so lets switch to fastkick
+        new_computer = FastKick(converter, number_of_workers=23)
+        new_computer.particles.add_particles(computer.particles)
+        potential_energy = new_computer.potential_energy()
+        new_computer.stop()
         print("potential energy", potential_energy.in_(units.erg))
         print("kinetic energy", computer.particles.kinetic_energy().in_(units.erg))
         E = computer.particles.kinetic_energy() + potential_energy
