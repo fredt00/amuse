@@ -26,7 +26,8 @@ from amuse.community.ph4.interface import ph4
 from amuse.datamodel import ParticlesSuperset
 import argparse
 from amuse.datamodel.particle_attributes import HopContainer
-
+import amuse.ext.galactic_potentials as galactic_potentials
+import inspect
 sys.setrecursionlimit(10000)
 
 # import petar
@@ -42,7 +43,25 @@ sys.setrecursionlimit(10000)
 
 # in case of petar files
 
-def amuse_cluster_new(filename, galaxy_filename,data):
+# really we should import this
+def convert_inputs_to_galactic_potential(potential_option, potential_parameters, potential_units):
+    num_parameters = len(potential_parameters)
+    if num_parameters!=len(potential_units): 
+        print('ERROR: you must specify units for all potential parameters')
+        return -1
+    input_args = len(inspect.getargs(getattr(galactic_potentials, potential_option).__init__.__code__).args)
+    if input_args-2 != num_parameters and input_args>1:
+        print('WARNING: you have not specified all potential parameters, default values will be used')
+    print('setting up potential', potential_option, 'with parameters', potential_parameters)
+    if num_parameters==0:
+        return getattr(galactic_potentials, potential_option)()
+
+    unit_converter = {'kpc': units.kpc, 'MSun/kpc3': units.MSun/units.kpc**3, 'MSun': units.MSun, 'None': units.none}
+    for i in range(len(potential_parameters)):
+        potential_parameters[i] = potential_parameters[i] | unit_converter[potential_units[i]]
+    return getattr(galactic_potentials, potential_option)(*potential_parameters)
+
+def amuse_cluster_new(filename, galaxy_filename,data, potential_option, potential_parameters, potential_units):
     print('about to read '+ filename)
     data_cluster = io.read_set_from_file(filename, close_file=True)
     if galaxy_filename:
@@ -60,7 +79,7 @@ def amuse_cluster_new(filename, galaxy_filename,data):
             galaxy_force_field.particles.add_particles(galaxy)
             galaxy_force_field.parameters.epsilon_squared=gal_converter.to_nbody((100 | units.pc)**2)
         else:
-            galaxy_force_field = MWpotentialBovy2015()
+            galaxy_force_field = convert_inputs_to_galactic_potential(potential_option, potential_parameters, potential_units)
         
         gal_field = tidal_field(galaxy_force_field)
         
@@ -70,6 +89,7 @@ def amuse_cluster_new(filename, galaxy_filename,data):
         # define a fastkick instance that we will use for all our potential calculations
         computer = ph4(converter, number_of_workers=23)
         computer.particles.add_particles(cluster)
+        # may need to set zero step mode for correct potential calculation
             # the particles in the framework that are currently defined as bound
             # find the centre of mass
         core = computer.particles.cluster_core(converter, density_weighting_power=2, reuse_hop=False, hop=HopContainer())
@@ -144,7 +164,7 @@ def model_cluster(filename, data):
 
 
 
-def main(filename, cluster_file_type, galaxy_filename,outfile):
+def main(filename, cluster_file_type, galaxy_filename,outfile, potential_option, potential_parameters, potential_units):
     print("reading in " + filename + " of type " + cluster_file_type + " and outputting to " + outfile)
     if galaxy_filename:
         print("using galaxy file " + galaxy_filename)
@@ -160,7 +180,7 @@ def main(filename, cluster_file_type, galaxy_filename,outfile):
     data["RhJ"] = [] | units.pc
 
     if cluster_file_type == 'hdf5':
-        final_data = amuse_cluster_new(filename,galaxy_filename, data)
+        final_data = amuse_cluster_new(filename,galaxy_filename, data, potential_option, potential_parameters, potential_units)
     elif cluster_file_type == 'txt':
         final_data = model_cluster(filename, data)
     else:
@@ -185,6 +205,17 @@ def new_argument_parser():
     
     result.add_argument("--galaxy_file", dest="galaxy_filename", default = None,
                       help="file containing galaxy data - currently used for computing the tidal radius (default: %(default)s)")
+    
+    result.add_argument("--potential_option", dest='potential_option', choices= [x for x in dir(galactic_potentials) if inspect.isclass(getattr(galactic_potentials, x))][2:], 
+                        default='MWpotentialBovy2015',
+                      help="choice of potential profile for the galaxy halo, options in amuse/ext/galactic_potentials.py (default: %(default)s)"),
+    # analytic inputs to be given in order - units to be given in next argument in same order!
+    result.add_argument("--potential_parameters", dest="potential_parameters", action="append", default = [],type=float,
+                        help="parameters for the potential profile in the order they appear in the class defintions (default: %(default)s)")
+    result.add_argument("--potential_units", dest="potential_units", action="append", choices=['kpc','MSun/kpc3','MSun','None'],
+                         default = [], type=str,
+                        help="units for the parameters for the potential profile in the order they appear in the class defintions (default: %(default)s)")
+    
     
     result.add_argument("--outfile", dest="outfile", default = None,
                       help="file for plotting data to be stored in (default: %(default)s)")
