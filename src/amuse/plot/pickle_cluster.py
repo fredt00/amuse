@@ -138,7 +138,7 @@ def amuse_cluster_new(filename, galaxy_filename,data, potential_option, potentia
         # something weird is going on with the potential energy calculation here, so lets switch to fastkick
         new_computer = FastKick(converter, number_of_workers=23)
         new_computer.particles.add_particles(computer.particles)
-        potential_energy = new_computer.potential_energy()
+        potential_energy = new_computer.potential_energy
         new_computer.stop()
         print("potential energy", potential_energy.in_(units.erg))
         print("kinetic energy", computer.particles.kinetic_energy().in_(units.erg))
