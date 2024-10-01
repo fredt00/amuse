@@ -306,8 +306,8 @@ class star_cluster_particle(internal_dynamics):
 
         # set up tidal shock tracking
         self.last_max_evalues = [0,0,0] | units.Gyr**-2
-        self.time_of_last_shock = [0,0,0]| units.Myr
-        self.eigenvalues = np.empty((0,3)) | units.Gyr**-2
+        self.time_of_last_shock = [0,0,0] | units.Myr
+        self.eigenvalues_gyrsq = []
 
         # storing dt probably good for stability so we don't have big jumps in it
         self.dt = 0.5 | units.Myr
@@ -332,7 +332,7 @@ class star_cluster_particle(internal_dynamics):
 
     def internal_evolution(self, tend):
         # tidal evolution - computes shock mass loss and change of rh due to this
-        # self.tidal_shock_evolution(tend)
+        self.tidal_shock_evolution(tend)
     
         # relaxation evolution - EMACSS model. updates model time
         self.relaxation_evolution(tend)
@@ -346,24 +346,27 @@ class star_cluster_particle(internal_dynamics):
         eigenvalues = self.tidal_tensor_eigenvalues(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
                                                      self.particles.position[0].z)
         
-        self.eigenvalues=np.append(self.eigenvalues, eigenvalues, axis=0)
-
+        self.eigenvalues_gyrsq.append(list(eigenvalues.value_in(units.Gyr**-2)))
+        eval_array = self.eigenvalues_gyrsq | units.Gyr**-2
         # assume shock happens evenly across cluster
         index=0
         dN=0
         for lam in eigenvalues:
+            if len(self.eigenvalues_gyrsq)<2: break
             # apply the shock for this component if any component drops below 88% of the last maximum and is approximately a minimum
-            if np.abs(lam) < 0.88*self.last_max_evalues[index] and np.gradient(np.abs(self.eigenvalues[:,index]))[-1] >= 0:
+            if np.abs(lam) < 0.88*self.last_max_evalues[index] and np.gradient(np.abs(eval_array[:,index].number))[-1] >= 0: # error in this line - too many indexes somewhere
                 # Weinberg coefficients
-                Awij = (1 + 0.237 * constants.G * self.N*self.mbar/self.half_mass_radius**3 * (self.model_time-self.time_of_last_shock[-1])**2)**(-3/2)
+                Awij = (1 + 0.237 * constants.G * self.N*self.mbar/self.half_mass_radius**3 * (self.model_time-self.time_of_last_shock[index])**2)**(-3/2)
 
                 # we need to integrate Tij dt over the time since the last shock - use scipy.integrate.simpson
-                Itid = np.abs(simpson(self.eigenvalues[int(self.time_of_last_shock[index]/dt):,index],
+                Itid = (simpson(eval_array[int(self.time_of_last_shock[index]/dt):,index].value_in(units.Gyr**-2),
                                        dx=dt.value_in(units.Gyr))/100)**2 * Awij
-                tshock = (self.model_time - self.time_of_last_shock[index]) * 65.6 * (self.particles.mass/(1e4 | units.MSun)) * \
+                
+                tshock = (self.model_time - self.time_of_last_shock[index]) * 65.6 * (self.particles.mass.sum()/(1e4 | units.MSun)) * \
                       (self.half_mass_radius/(4 | units.pc)) ** -3 * Itid ** -1
 
                 dN -= dt*self.N/tshock 
+                print("dN", dN)
                 self.time_of_last_shock[index]=self.model_time
                 self.last_max_evalues[index] = lam
             if np.abs(lam) > self.last_max_evalues[index]:
