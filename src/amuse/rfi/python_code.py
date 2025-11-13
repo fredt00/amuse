@@ -191,7 +191,6 @@ class PythonImplementation(object):
         specification = legacy_function.specification
         dtype_to_count = self.get_dtype_to_count(specification)
         
-        
         if hasattr(specification, "internal_provided"):
             method = getattr(self, specification.name)
         else:
@@ -347,12 +346,12 @@ class PythonImplementation(object):
     
     
 
-    def internal__set_message_polling_interval(self, inval):
-        self.polling_interval = inval
+    def internal__set_message_polling_interval(self, polling_interval):
+        self.polling_interval = polling_interval
         return 0
     
-    def internal__get_message_polling_interval(self, outval):
-        outval.value = self.polling_interval 
+    def internal__get_message_polling_interval(self, polling_interval):
+        polling_interval.value = self.polling_interval 
         return 0
         
     def get_null_info(self):
@@ -495,20 +494,20 @@ class PythonImplementation(object):
 
     def internal__become_code(self, number_of_workers, modulename, classname):
         warnings.warn(" possible experimental code path?")
-        #~ print number_of_workers, modulename, classname
+        # print number_of_workers, modulename, classname
         world = self.freeworld
         color = 0 if world.rank < number_of_workers else 1
         key = world.rank if world.rank < number_of_workers else world.rank - number_of_workers
-        #~ print "CC,", color, key, world.rank, world.size
+        # print "CC,", color, key, world.rank, world.size
         newcomm = world.Split(color, key)
-        #~ print ("nc:", newcomm.size, newcomm.rank)
-        #~ print ("AA", self.world, color, self.world.rank, self.world.size)
+        # print ("nc:", newcomm.size, newcomm.rank)
+        # print ("AA", self.world, color, self.world.rank, self.world.size)
         try:
             new_intercomm = newcomm.Create_intercomm(0, self.world, 0, color)
         except Exception as ex:
             warnings.warn(str(ex))
             raise ex
-        #~ print ("nccc:", new_intercomm.Get_remote_size(), new_intercomm.rank)
+        # print ("nccc:", new_intercomm.Get_remote_size(), new_intercomm.rank)
         
         self.communicators.append(new_intercomm)
         self.id_to_activate = len(self.communicators) - 1
