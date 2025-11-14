@@ -100,6 +100,59 @@ class tidal_field(object):
         self.grav_instance=grav_instance
         if yt_file_path: self.parse_tidal_data_fine(yt_file_path, sink_id)
         else: self.sink_info=None
+
+    def has_file_tidal(self):
+        return hasattr(self, "sink_info") and "since_form" in self.sink_info
+
+    def tidal_sample_times(self, unit=units.Myr):
+        """Return the TT sample times (since_form) as an AMUSE array in desired units."""
+        if not self.has_file_tidal():
+            return None
+        return self.sink_info["since_form"].as_quantity_in(unit)
+
+    def time_to_next_tidal_knot(self, t_now):
+        """
+        Smallest positive Δt to the next TT sample time ≥ t_now.
+        If we're at/after the last sample, return +inf Myr.
+        """
+        if not self.has_file_tidal():
+            return np.inf | units.Myr
+        tt = self.tidal_sample_times(units.Myr).value_in(units.Myr)
+        x  = t_now.value_in(units.Myr)
+        j  = np.searchsorted(tt, x, side="right")
+        if j >= len(tt):
+            return np.inf | units.Myr
+        return (tt[j] - x) | units.Myr
+
+    def get_tidal_field_at_model_time(self, model_time):
+        """
+        Interpolate Txx..Tyz at given since_form time (AMUSE quantity).
+        Returns AMUSE quantities in gyr^-2.
+        """
+        import numpy as np
+        if not self.has_file_tidal():
+            raise RuntimeError("No file-backed tidal tensor loaded. "
+                            "Call parse_tidal_data_fine(...) first.")
+        t_gyr = self.sink_info["since_form"].value_in(units.gyr)
+        order = np.argsort(t_gyr)
+        t_sorted = t_gyr[order]
+        mt = np.asarray(model_time.value_in(units.gyr))
+
+        out = []
+        for key in ("Txx","Tyy","Tzz","Txy","Txz","Tyz"):
+            y = self.sink_info[key].value_in(units.gyr**-2)[order]
+            out.append(np.interp(mt, t_sorted, y) | (units.gyr**-2))
+        return tuple(out)
+
+    def tidal_tensor_eigenvalues_from_file(self, model_time):
+        Txx,Tyy,Tzz,Txy,Txz,Tyz = self.get_tidal_field_at_model_time(model_time)
+        M = np.array([
+            [Txx.value_in(units.gyr**-2), Txy.value_in(units.gyr**-2), Txz.value_in(units.gyr**-2)],
+            [Txy.value_in(units.gyr**-2), Tyy.value_in(units.gyr**-2), Tyz.value_in(units.gyr**-2)],
+            [Txz.value_in(units.gyr**-2), Tyz.value_in(units.gyr**-2), Tzz.value_in(units.gyr**-2)],
+        ], dtype=float)
+        evals, _ = np.linalg.eig(M)          # floats
+        return evals | (units.gyr**-2)       # attach units
                 
     def parse_tidal_data_fine(self, file_path, sink_id):
         """
@@ -209,18 +262,19 @@ class tidal_field(object):
         # ---- package everything as AMUSE quantities
         sink = dict(
             t_code=t_code,                    # Myr
-            aexp=aexp_q, z=z_q,               # dimensionless
+            aexp=aexp_q,                      # dimensionless
+            redshift=z_q,                     # <-- was z=z_q; renamed to avoid clash
             lookback_time=lookback_time,      # Gyr
             cosmic_time=cosmic_time,          # Gyr
             since_form=since_form,            # Gyr (starts at 0)
-            x=x, y=y, z=z,                    # kpc (proper)
+            x=x, y=y, z=z,                    # kpc (proper)  (positions)
             Txx=Txx, Tyy=Tyy, Tzz=Tzz, Txy=Txy, Txz=Txz, Tyz=Tyz,   # gyr^-2
 
-            # bookkeeping (all AMUSE quantities as requested)
-            unit_t= (unit_t.to("s").value | units.s),
-            unit_l= (unit_l.to("cm").value | units.cm),
-            a0= (a0 | units.none),
-            h= (h | units.none),
+            # bookkeeping
+            unit_t=(unit_t.to("s").value | units.s),
+            unit_l=(unit_l.to("cm").value | units.cm),
+            a0=(a0 | units.none),
+            h=(h | units.none),
             omega_m=(omegam | units.none),
             omega_l=(omegal | units.none),
             H0=H0_1_over_gyr,   # 1/gyr; 0 if non-cosmological
@@ -244,55 +298,6 @@ class tidal_field(object):
                 sink[k] = v  # scalars: leave as-is
 
         self.sink_info = sink
-
-    def get_tidal_field_at_time_proper_time(self, model_time):
-        """
-        Interpolate the tidal tensor at a given model_time measured on the
-        'since_form' clock (same definition as self.sink_info['since_form']).
-
-        Parameters
-        ----------
-        model_time : AMUSE quantity
-            Time since formation (e.g. 0.25 | units.gyr).
-
-        Returns
-        -------
-        Txx, Tyy, Tzz, Txy, Txz, Tyz : AMUSE quantities (units.gyr**-2)
-
-        Notes
-        -----
-        - If model_time lies outside the tabulated range, the result is clamped
-        to the nearest edge (numpy.interp behavior).
-        - Works with scalar or array-like model_time.
-        """
-
-        if not hasattr(self, "sink_info") or "since_form" not in self.sink_info:
-            raise RuntimeError("sink_info with 'since_form' is not available. "
-                            "Run parse_tidal_data_fine(...) first.")
-
-        # 1) Time axis (since_form) in Gyr, sorted
-        t_sf = self.sink_info["since_form"]              # AMUSE quantity
-        t_gyr = np.asarray(t_sf.value_in(units.gyr))     # float array
-        order = np.argsort(t_gyr)
-        t_sorted = t_gyr[order]
-
-        # 2) Helper: interpolate one component in gyr^-2 and return AMUSE quantity
-        def interp_comp(key):
-            arr = self.sink_info[key]                                    # AMUSE quantity
-            y_sorted = np.asarray(arr.value_in(units.gyr**-2))[order]    # floats
-            xq = np.asarray(model_time.value_in(units.gyr))              # floats (scalar or array)
-            yq = np.interp(xq, t_sorted, y_sorted)                       # floats
-            return yq | (units.gyr**-2)
-
-        # 3) Interpolate all six components
-        Txx = interp_comp("Txx")
-        Tyy = interp_comp("Tyy")
-        Tzz = interp_comp("Tzz")
-        Txy = interp_comp("Txy")
-        Txz = interp_comp("Txz")
-        Tyz = interp_comp("Tyz")
-
-        return Txx, Tyy, Tzz, Txy, Txz, Tyz
         
     def get_tidalfield_at_point(self,scale,x,y,z):
         # perhaps this could vary, = self.rhalf
@@ -337,7 +342,6 @@ class tidal_field(object):
         eigenvalues = eigenvalues | units.gyr**-2
         return eigenvalues
     
-    # new routines using potential
     def get_tidalfield_at_point_pot(self,scale,x,y,z):
         h = scale
         # on axis terms
@@ -400,6 +404,13 @@ class tidal_field(object):
         omegasq = np.abs(eigenvalues.sum())/3
         T = max_eigenvalue + omegasq
         return (constants.G * satellite_mass/T)**(1/3)
+    
+    def tidal_radius_from_file(self, model_time, satellite_mass):
+        evals = self.tidal_tensor_eigenvalues_from_file(model_time)   # AMUSE, gyr^-2
+        max_eig = np.max(evals)
+        omegasq = np.abs(evals.sum())/3
+        T = max_eig + omegasq
+        return (constants.G * satellite_mass / T)**(1/3)
 
 # create a wrapper class for a gravity code to describe a star cluster including bound and unbound particles and stellar evolution
 class star_cluster(tidal_field):

@@ -64,18 +64,20 @@ global y
 y = -0.3
 
 class internal_dynamics(tidal_field):
-    def __init__(self, N, mbar, mbar_se, half_mass_radius, kappa, M_seg, n_trhp, particles, grav_instance, stellar_evolution, VG, time, no_core_collapse, rtidal_from_pot):
-        
-        # turn core collapse evolution on/off depending on nc
-        # if no_core_collapse:
-        #     global nc
-        #     nc = 0
+    def __init__(self, N, mbar, mbar_se, half_mass_radius, kappa, M_seg, n_trhp,
+                 particles, grav_instance, stellar_evolution, VG, time,
+                 no_core_collapse, rtidal_from_pot,
+                 yt_file_path=None, sink_id=None, follow_sink_trajectory=False):
         self.no_core_collapse = no_core_collapse
         self.rtidal_from_pot = rtidal_from_pot
-        super().__init__(grav_instance)
-        
-        self.VG = VG
+        self.follow_sink_trajectory = follow_sink_trajectory
 
+        # init tidal_field (this will parse file if path/id are given)
+        super().__init__(grav_instance, yt_file_path=yt_file_path, sink_id=sink_id)
+
+        self.uses_file_tidal = self.has_file_tidal()
+
+        self.VG = VG
         self.particles = particles
 
         if not half_mass_radius:
@@ -100,10 +102,22 @@ class internal_dynamics(tidal_field):
         self.stellar_evolution = stellar_evolution
 
         self.model_time = time
-        
-        # compute the initial relaxation time
         self.trhp = self.relaxation_time_prime()
 
+        # history buffers for shocks (now with explicit time stamps)
+        self.eigenvalues_gyrsq = []     # list of [lam1, lam2, lam3] float triplets in Gyr^-2
+        self.eigenvalues_times = []     # list of times (AMUSE quantities, Gyr)
+        self.last_max_evalues = [0,0,0] | units.Gyr**-2
+        self.time_of_last_shock = [0,0,0] | units.Myr
+        self.dt = 0.5 | units.Myr
+    def _tidal_eigenvalues_now(self, t_when):
+        if getattr(self, "uses_file_tidal", False) and self.has_file_tidal():
+            return self.tidal_tensor_eigenvalues_from_file(t_when)
+        # fallback: derivative-of-gravity/potential path you already had
+        return self.tidal_tensor_eigenvalues(4 | units.pc,
+                                            self.particles.position[0].x,
+                                            self.particles.position[0].y,
+                                            self.particles.position[0].z)
     # singular isothermal sphere - used if VG is specified. for comparisson with EMACSS paper
     def emacss_isothermal_rj(self):
         RG= self.particles.position.lengths()[0]
@@ -118,14 +132,19 @@ class internal_dynamics(tidal_field):
         return r*pow(m/(2.0*Mgal),1.0/3.0) # 2 for continuous, 3 for point mass
     
     def rtidal(self):
+        if self.has_file_tidal():  # <-- first: use RAMSES TT if present
+            return self.tidal_radius_from_file(self.model_time, self.particles.mass[0])
         if self.rtidal_from_pot:
             return self.mass_est_rtidal()
         elif self.grav_instance:
-            return self.tidal_radius(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
-                                        self.particles.position[0].z, self.particles.mass[0])
+            return self.tidal_radius(4 | units.pc,
+                                    self.particles.position[0].x,
+                                    self.particles.position[0].y,
+                                    self.particles.position[0].z,
+                                    self.particles.mass[0])
         elif self.VG:
             return self.emacss_isothermal_rj()
-        else: 
+        else:
             return np.inf | units.pc
             
     # stellar evolution quantities
@@ -282,9 +301,11 @@ class internal_dynamics(tidal_field):
 ## TO DO
 # - add a unit converter to the class
 class star_cluster_particle(internal_dynamics):
-    def __init__(self, N=None, mass=None, half_mass_radius=4.35 | units.pc, kappa=0.2, M_seg=3, mbar=None, mbar_se=None, n_trhp=0,
-                 position=None, velocity=None, grav_instance=None, stellar_evolution=True, VG=None, time = 0 | units.Myr, no_core_collapse=False, rtidal_from_pot=False):
-        
+    def __init__(self, N=None, mass=None, half_mass_radius=4.35 | units.pc, kappa=0.2, M_seg=3,
+                 mbar=None, mbar_se=None, n_trhp=0, position=None, velocity=None,
+                 grav_instance=None, stellar_evolution=True, VG=None, time=0 | units.Myr,
+                 no_core_collapse=False, rtidal_from_pot=False,
+                 yt_file_path=None, sink_id=None, follow_sink_trajectory=False):
         # set up initial conditions accounting for restarts
         if not mbar:
             mbar = 0.637712441346 | units.MSun # this is only for 0.1-100 MSun kroupa
@@ -314,21 +335,29 @@ class star_cluster_particle(internal_dynamics):
 
 
         # if tidal field is present
-        super().__init__(N=mass/mbar, mbar = mbar, mbar_se=mbar_se,half_mass_radius=half_mass_radius, kappa=kappa, M_seg=M_seg, n_trhp=n_trhp, particles=particles,
-                            grav_instance=grav_instance, stellar_evolution=stellar_evolution, VG=VG, time=time, no_core_collapse=no_core_collapse, rtidal_from_pot=rtidal_from_pot)
-    
+        super().__init__(N=mass/mbar, mbar=mbar, mbar_se=mbar_se, half_mass_radius=half_mass_radius,
+                         kappa=kappa, M_seg=M_seg, n_trhp=n_trhp, particles=particles,
+                         grav_instance=grav_instance, stellar_evolution=stellar_evolution,
+                         VG=VG, time=time, no_core_collapse=no_core_collapse,
+                         rtidal_from_pot=rtidal_from_pot,
+                         yt_file_path=yt_file_path, sink_id=sink_id,
+                         follow_sink_trajectory=follow_sink_trajectory)
 
     def evolve_model(self, tend):
-        dt = tend - self.model_time
+        while self.model_time < tend:
+            # size of this chunk: don’t jump over the next tidal-sample knot
+            if getattr(self, "uses_file_tidal", False) and self.has_file_tidal():
+                cap_to_knot = self.time_to_next_tidal_knot(self.model_time)
+                if cap_to_knot == (np.inf | units.Myr):
+                    cap_to_knot = tend - self.model_time
+                dt_chunk = min(tend - self.model_time, cap_to_knot)
+            else:
+                dt_chunk = tend - self.model_time
 
-        # evolve the EMACSS model - leapfrog 
-        self.internal_evolution(self.model_time + dt/2)
-
-        # update particle position
-        self.particles.position += self.particles.velocity * dt
-
-        # evolve the EMACSS model - leapfrog
-        self.internal_evolution(tend)
+            # leapfrog on this chunk
+            self.internal_evolution(self.model_time + 0.5 * dt_chunk)
+            self.particles.position += self.particles.velocity * dt_chunk
+            self.internal_evolution(self.model_time + dt_chunk)
 
     def internal_evolution(self, tend):
         # tidal evolution - computes shock mass loss and change of rh due to this
@@ -341,42 +370,66 @@ class star_cluster_particle(internal_dynamics):
 
     def tidal_shock_evolution(self, tend):
         dt = tend - self.model_time
-        # tidal tensor mass loss as position is not updated in this timestep - make this a funtion
-        # Construct the tidal tensor
-        eigenvalues = self.tidal_tensor_eigenvalues(4 | units.pc, self.particles.position[0].x, self.particles.position[0].y,
-                                                     self.particles.position[0].z)
-        
-        self.eigenvalues_gyrsq.append(list(eigenvalues.value_in(units.Gyr**-2)))
-        eval_array = self.eigenvalues_gyrsq | units.Gyr**-2
-        # assume shock happens evenly across cluster
-        index=0
-        dN=0
-        for lam in eigenvalues:
-            if len(self.eigenvalues_gyrsq)<2: break
-            # apply the shock for this component if any component drops below 88% of the last maximum and is approximately a minimum
-            if np.abs(lam) < 0.88*self.last_max_evalues[index] and np.gradient(np.abs(eval_array[:,index].number))[-1] >= 0: # error in this line - too many indexes somewhere
-                # Weinberg coefficients
-                Awij = (1 + 0.237 * constants.G * self.N*self.mbar/self.half_mass_radius**3 * (self.model_time-self.time_of_last_shock[index])**2)**(-3/2)
 
-                # we need to integrate Tij dt over the time since the last shock - use scipy.integrate.simpson
-                Itid = (simpson(eval_array[int(self.time_of_last_shock[index]/dt):,index].value_in(units.Gyr**-2),
-                                       dx=dt.value_in(units.Gyr))/100)**2 * Awij
-                
-                tshock = (self.model_time - self.time_of_last_shock[index]) * 65.6 * (self.particles.mass.sum()/(1e4 | units.MSun)) * \
-                      (self.half_mass_radius/(4 | units.pc)) ** -3 * Itid ** -1
+        # eigenvalues at current time (AMUSE, Gyr^-2)
+        evalues = self._tidal_eigenvalues_now(self.model_time)
 
-                dN -= dt*self.N/tshock 
-                print("dN", dN)
-                self.time_of_last_shock[index]=self.model_time
-                self.last_max_evalues[index] = lam
-            if np.abs(lam) > self.last_max_evalues[index]:
-                self.last_max_evalues[index] = np.abs(lam)
-            index+=1
+        # record history: floats + explicit time array for integration
+        self.eigenvalues_gyrsq.append(list(evalues.value_in(units.Gyr**-2)))  # [[lam1,lam2,lam3], ...]
+        self.eigenvalues_times.append(self.model_time.as_quantity_in(units.Gyr))  # [t0, t1, ...]
 
-        # half mass radius evolution due to tidal shocks
-        dr = dN*self.half_mass_radius/self.N*(2-1/tidal_shock_energy_fraction)
+        if len(self.eigenvalues_gyrsq) < 2:
+            return
+
+        times_gyr = np.array([t.value_in(units.Gyr) for t in self.eigenvalues_times])   # shape (n,)
+        eval_arr  = np.array(self.eigenvalues_gyrsq)                                     # shape (n,3), floats (Gyr^-2)
+
+        dN = 0.0 | units.none
+        for idx in range(3):
+            lam_now_abs = np.abs(evalues[idx])
+
+            # track running max of |lambda|
+            if lam_now_abs > self.last_max_evalues[idx]:
+                self.last_max_evalues[idx] = lam_now_abs
+
+            # trigger: drop below 88% of last max AND local minimum trend
+            grad_last = np.gradient(np.abs(eval_arr[:, idx]))[-1]
+            drop = (np.abs(lam_now_abs) < 0.88 * self.last_max_evalues[idx]) and (grad_last >= 0)
+
+            if not drop:
+                continue
+
+            # integration window since the last shock for this component
+            t_last = self.time_of_last_shock[idx].as_quantity_in(units.Gyr).value
+            mask = times_gyr >= t_last
+            if mask.sum() < 2:
+                continue
+
+            # Weinberg adiabatic correction
+            Awij = (1 + 0.237 * constants.G * self.N*self.mbar/self.half_mass_radius**3
+                    * (self.model_time - self.time_of_last_shock[idx])**2)**(-1.5)
+
+            # ∫ |λ| dt using explicit x-array; result in Gyr^-1
+            integ = simpson(np.abs(eval_arr[mask, idx]), x=times_gyr[mask])
+            Itid  = (integ/100.0)**2 * Awij  # keep your empirical scaling
+
+            # characteristic shock timescale
+            tshock = (self.model_time - self.time_of_last_shock[idx]) * 65.6 \
+                    * (self.particles.mass.sum()/(1e4 | units.MSun)) \
+                    * (self.half_mass_radius/(4 | units.pc))**-3 * Itid**-1
+
+            # apply mass-loss in number of stars during this *current* dt
+            dN -= dt * self.N / tshock
+
+            # reset for next window
+            self.time_of_last_shock[idx] = self.model_time
+            self.last_max_evalues[idx]   = lam_now_abs
+
+        # size response to the shock
+        dr = dN * self.half_mass_radius/self.N * (2 - 1/tidal_shock_energy_fraction)
         self.N += dN
         self.half_mass_radius += dr
+
 
     def relaxation_evolution(self,tend):
         tol = 1e-6
