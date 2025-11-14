@@ -11,6 +11,10 @@ import numpy as np
 from scipy.integrate import simpson as simp
 from amuse.ic.brokenimf import MultiplePartIMF
 from amuse.datamodel.particle_attributes import HopContainer
+import os, re, yt
+from yt.utilities.cosmology import Cosmology
+import glob
+from yt.units import Myr, Gyr, km, s, Mpc  
 class center_of_mass(object):
     """
     com=center_of_mass(grav_instance)
@@ -92,9 +96,204 @@ class tidal_field(object):
     derived system, returns tidal field system with get_tidalfield_at_point
     get_tidalfield_at_point_per_gyr_sq, and tidal_radius methods
     """
-    def __init__(self,grav_instance):
+    def __init__(self,grav_instance=None, yt_file_path=None, sink_id=None):
         self.grav_instance=grav_instance
+        if yt_file_path: self.parse_tidal_data_fine(yt_file_path, sink_id)
+        else: self.sink_info=None
+                
+    def parse_tidal_data_fine(self, file_path, sink_id):
+        """
+        Read log_TT/TT_{sink_id:05d}.dat and store all arrays as AMUSE quantities.
 
+        Assumptions:
+        - Columns: [t_code, aexp, x, y, z, Txx, Tyy, Tzz, Txy, Txz, Tyz]
+        - Positions (x,y,z) are in RAMSES code length units (comoving).
+        - Tidal tensor components are in RAMSES code units of 1/(code_time)^2.
+
+        Stored fields (all AMUSE quantities):
+        t_code (Myr), aexp (dimensionless), z (dimensionless),
+        cosmic_time (Gyr), lookback_time (Gyr), since_form (Gyr),
+        x,y,z (kpc, proper), Txx..Tyz (gyr^-2), plus a few bookkeeping params.
+        """
+
+        # ---- locate and load one RAMSES output to get units/cosmology
+        info_candidates = sorted(glob.glob(os.path.join(file_path, "output_*", "info_*.txt")))
+        if not info_candidates:
+            raise FileNotFoundError(f"No RAMSES info_*.txt under {file_path}/output_*/")
+        ds = yt.load(info_candidates[0])
+
+        # Base code units (authoritative from info_*.txt)
+        unit_t = ds.quan(ds.parameters["unit_t"], "s")   # code time unit
+        unit_l = ds.quan(ds.parameters["unit_l"], "cm")  # code length unit
+        a0 = float(ds.parameters.get("aexp", 1.0))       # scale factor for this output
+
+        # Build a yt Cosmology when this is a cosmological run
+        is_cosmo = bool(getattr(ds, "cosmological_simulation", False))
+        if is_cosmo:
+            # h, Omega_m, Omega_L are available on ds for RAMSES
+            h = float(getattr(ds, "hubble_constant", 0.0))
+            omegam = float(getattr(ds, "omega_matter", 0.0))
+            omegal = float(getattr(ds, "omega_lambda", 0.0))
+            cosmo = Cosmology(hubble_constant=h, omega_matter=omegam, omega_lambda=omegal)
+            # optional: H0 in 1/Gyr
+            H0_1_over_gyr = (h * 100.0 * km/s/Mpc).to(1/Gyr).value | (1/units.gyr)
+        else:
+            h = omegam = omegal = 0.0
+            cosmo = None
+            H0_1_over_gyr = 0.0 | (1/units.gyr)
+
+        # ---- read the per-sink TT file
+        tt_dir = os.path.join(file_path, "log_TT")
+        tt_path = os.path.join(tt_dir, f"TT_{int(sink_id):05d}.dat")
+        if not os.path.isfile(tt_path):
+            raise FileNotFoundError(f"Missing TT file: {tt_path}")
+
+        data = np.genfromtxt(tt_path)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+
+        # Columns
+        t_code = data[:, 0]      # code time (dimensionless multiplier of unit_t)
+        aexp   = data[:, 1]
+        x_cu   = data[:, 2]
+        y_cu   = data[:, 3]
+        z_cu   = data[:, 4]
+        Txx_cu = data[:, 5]
+        Tyy_cu = data[:, 6]
+        Tzz_cu = data[:, 7]
+        Txy_cu = data[:, 8]
+        Txz_cu = data[:, 9]
+        Tyz_cu = data[:,10]
+
+        # ---- times
+        # Code time as AMUSE quantity (in Myr for convenience)
+        t_code_myr_vals = (t_code * unit_t).to(Myr).value
+        t_code = t_code_myr_vals | units.Myr
+
+        if is_cosmo:
+            z_vals = 1.0 / aexp - 1.0
+            lookback_gyr_vals    = cosmo.lookback_time(z_vals).to(Gyr).value
+            cosmic_time_gyr_vals = cosmo.t_from_z(z_vals).to(Gyr).value
+            z_q   = z_vals | units.none
+            aexp_q = aexp  | units.none
+            lookback_time = lookback_gyr_vals | units.gyr
+            cosmic_time   = cosmic_time_gyr_vals | units.gyr
+        else:
+            # Non-cosmological: treat code time as the physical clock; aexp≈1, z≈0
+            z_q    = np.zeros_like(aexp) | units.none
+            aexp_q = aexp | units.none
+            lookback_time = np.zeros_like(aexp) | units.gyr
+            cosmic_time   = t_code.as_quantity_in(units.gyr)
+
+        # since_form: ensure a forward-running clock from the earliest entry
+        since_form = cosmic_time - cosmic_time.min()
+
+        # ---- positions: code length -> proper kpc (multiply by a/a0)
+        x_kpc_vals = (x_cu * unit_l * (aexp / a0)).to("kpc").value
+        y_kpc_vals = (y_cu * unit_l * (aexp / a0)).to("kpc").value
+        z_kpc_vals = (z_cu * unit_l * (aexp / a0)).to("kpc").value
+        x = x_kpc_vals | units.kpc
+        y = y_kpc_vals | units.kpc
+        z = z_kpc_vals | units.kpc
+
+        # ---- tidal tensor: code units (1/unit_t^2) -> Gyr^-2, stored as AMUSE quantities
+        inv_t_gyr = (1.0 / unit_t).to(1/Gyr).value  # numeric in 1/Gyr
+        fac = inv_t_gyr**2
+        Txx = (Txx_cu * fac) | (units.gyr**-2)
+        Tyy = (Tyy_cu * fac) | (units.gyr**-2)
+        Tzz = (Tzz_cu * fac) | (units.gyr**-2)
+        Txy = (Txy_cu * fac) | (units.gyr**-2)
+        Txz = (Txz_cu * fac) | (units.gyr**-2)
+        Tyz = (Tyz_cu * fac) | (units.gyr**-2)
+
+        # ---- package everything as AMUSE quantities
+        sink = dict(
+            t_code=t_code,                    # Myr
+            aexp=aexp_q, z=z_q,               # dimensionless
+            lookback_time=lookback_time,      # Gyr
+            cosmic_time=cosmic_time,          # Gyr
+            since_form=since_form,            # Gyr (starts at 0)
+            x=x, y=y, z=z,                    # kpc (proper)
+            Txx=Txx, Tyy=Tyy, Tzz=Tzz, Txy=Txy, Txz=Txz, Tyz=Tyz,   # gyr^-2
+
+            # bookkeeping (all AMUSE quantities as requested)
+            unit_t= (unit_t.to("s").value | units.s),
+            unit_l= (unit_l.to("cm").value | units.cm),
+            a0= (a0 | units.none),
+            h= (h | units.none),
+            omega_m=(omegam | units.none),
+            omega_l=(omegal | units.none),
+            H0=H0_1_over_gyr,   # 1/gyr; 0 if non-cosmological
+        )
+
+        # ---- deduplicate by cosmic time (keep LAST occurrence)
+        # Use float-valued keys to handle AMUSE quantities.
+        ct_vals = sink["cosmic_time"].value_in(units.gyr)
+        # Keep last index for each time (round to reduce floating-point noise)
+        keys = np.round(ct_vals, decimals=12)
+        last_index = {}
+        for i, tval in enumerate(keys):
+            last_index[tval] = i
+        keep = np.array(sorted(last_index.values()))
+
+        for k, v in list(sink.items()):
+            # Each v is an AMUSE quantity array or scalar; index arrays only
+            try:
+                sink[k] = v[keep]
+            except Exception:
+                sink[k] = v  # scalars: leave as-is
+
+        self.sink_info = sink
+
+    def get_tidal_field_at_time_proper_time(self, model_time):
+        """
+        Interpolate the tidal tensor at a given model_time measured on the
+        'since_form' clock (same definition as self.sink_info['since_form']).
+
+        Parameters
+        ----------
+        model_time : AMUSE quantity
+            Time since formation (e.g. 0.25 | units.gyr).
+
+        Returns
+        -------
+        Txx, Tyy, Tzz, Txy, Txz, Tyz : AMUSE quantities (units.gyr**-2)
+
+        Notes
+        -----
+        - If model_time lies outside the tabulated range, the result is clamped
+        to the nearest edge (numpy.interp behavior).
+        - Works with scalar or array-like model_time.
+        """
+
+        if not hasattr(self, "sink_info") or "since_form" not in self.sink_info:
+            raise RuntimeError("sink_info with 'since_form' is not available. "
+                            "Run parse_tidal_data_fine(...) first.")
+
+        # 1) Time axis (since_form) in Gyr, sorted
+        t_sf = self.sink_info["since_form"]              # AMUSE quantity
+        t_gyr = np.asarray(t_sf.value_in(units.gyr))     # float array
+        order = np.argsort(t_gyr)
+        t_sorted = t_gyr[order]
+
+        # 2) Helper: interpolate one component in gyr^-2 and return AMUSE quantity
+        def interp_comp(key):
+            arr = self.sink_info[key]                                    # AMUSE quantity
+            y_sorted = np.asarray(arr.value_in(units.gyr**-2))[order]    # floats
+            xq = np.asarray(model_time.value_in(units.gyr))              # floats (scalar or array)
+            yq = np.interp(xq, t_sorted, y_sorted)                       # floats
+            return yq | (units.gyr**-2)
+
+        # 3) Interpolate all six components
+        Txx = interp_comp("Txx")
+        Tyy = interp_comp("Tyy")
+        Tzz = interp_comp("Tzz")
+        Txy = interp_comp("Txy")
+        Txz = interp_comp("Txz")
+        Tyz = interp_comp("Tyz")
+
+        return Txx, Tyy, Tzz, Txy, Txz, Tyz
+        
     def get_tidalfield_at_point(self,scale,x,y,z):
         # perhaps this could vary, = self.rhalf
         h = scale
@@ -138,7 +337,6 @@ class tidal_field(object):
         eigenvalues = eigenvalues | units.gyr**-2
         return eigenvalues
     
-
     # new routines using potential
     def get_tidalfield_at_point_pot(self,scale,x,y,z):
         h = scale
@@ -186,6 +384,7 @@ class tidal_field(object):
         Txz=Txz.value_in(units.gyr**-2)
         Tyz=Tyz.value_in(units.gyr**-2)
         return Txx,Tyy,Tzz,Txy,Txz,Tyz
+    
     def tidal_tensor_eigenvalues_pot(self, scale, x, y, z):
         Txx, Tyy, Tzz, Txy, Txz, Tyz = self.get_tidalfield_at_point_pot_per_gyr_sq(scale, x, y, z)
         tidal_tensor = np.array([[Txx, Txy, Txz],
